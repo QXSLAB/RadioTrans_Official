@@ -115,8 +115,8 @@ class PowerSet(Dataset):
 
         y = Image.open(os.path.join(self.root, x))
         y = self.transform(y)
-
-        x = re.findall(r"-?\d+\.?\d*", x)
+        
+        x = re.findall(r"-?\d\.?\d*e?-?\+?\d*", x)
         x = list(map(float, x))
         x = torch.tensor(x)
         
