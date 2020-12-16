@@ -1,6 +1,7 @@
 import os
 import torch
 import torch.nn as nn
+from torch.nn.functional import l1_loss
 from math import floor
 from torch.optim import Adam
 from raw import PowerSet
@@ -9,6 +10,15 @@ from torchvision import transforms
 from torchvision.utils import make_grid, save_image
 from torch.utils.tensorboard import SummaryWriter
 from model import CGAN_G, CGAN_D, weight_init
+
+
+def visulize_weight_grad(writer, model, step):
+
+    for tag, value in model.named_parameters():
+        tag = tag.replace(".", "/")
+        writer.add_histogram("weight/"+tag, value, step)
+        writer.add_histogram("grad/"+tag, value.grad, step)
+
 
 def main():
 
@@ -54,6 +64,11 @@ def main():
     # setup model
     G = CGAN_G().cuda()
     D = CGAN_D().cuda()
+
+    # visulize model
+    input_G = torch.rand(fixed.shape[0], 100).cuda(), fixed.cuda()
+    input_D = fixed.cuda(), G(*input_G)
+    writer.add_graph(D, input_D)
 
     # apply weight init
     G.apply(weight_init)
@@ -111,50 +126,71 @@ def main():
 
             D_opt.step()
 
+
             # clear grad in G
 
             G.zero_grad()
             
-            # cal grad in G
+            # grad of G
 
-            x, _ = next(iter_loader, ("",""))
+            x, gt = next(iter_loader, ("",""))
             if x=="": break
             z = torch.rand(x.shape[0], 100)
-            z, x = z.cuda(), x.cuda()
+            z, x, gt = z.cuda(), x.cuda(), gt.cuda()
 
             y = G(z, x)
             o = D(x, y)
             errG = criterion(o, o.new_ones(o.shape))
             errG.backward()
+
+            mse = l1_loss(gt.view(-1,4096), y)
             
+            # update G
+
+            G_opt.step()
+
+            
+            # update global step
+
             step += 1
             if step % 10 == 9: continue
 
-            # track training
+            # track progress
+
             print("Epoch [{}] Global [{}]".format(e, step), end="\r")
 
-            # output in tensorboard 
+            # track performance 
 
             errD = {"real": errD_real,
                     "no_match": errD_no_match,
                     "gen": errD_gen,
                     "all": errD_real + errD_no_match + errD_gen}
             writer.add_scalars("err/D", errD, step)
-
             writer.add_scalar("err/G", errG, step)
-            
-            z = torch.rand(x.shape[0], 100)
-            y = G(z.cuda(), fixed.cuda())
-            fake_img = make_grid(y, normalize=True)
-            writer.add_image("fake", fake_img, step)
+            writer.add_scalar("err/mse", mse, step)
+
 
         # save model
 
         if e%10 == 9:
-           torch.save(G.state_dict(), 
-                      os.path.join(experiment, "G_{}.pt".format(e)))
-           torch.save(D.state_dict(), 
-                      os.path.join(experiment, "D_{}.pt".format(e)))
+
+            # check weight
+
+            visulize_weight_grad(writer, G, step)
+            visulize_weight_grad(writer, D, step)
+
+            # check output
+
+            z = torch.rand(fixed.shape[0], 100)
+            y = G(z.cuda(), fixed.cuda())
+            fake_img = make_grid(y, normalize=True)
+            writer.add_image("fake", fake_img, e)
+           
+            torch.save(G.state_dict(), 
+                        os.path.join(experiment, "G_{}.pt".format(e)))
+            torch.save(D.state_dict(), 
+                        os.path.join(experiment, "D_{}.pt".format(e)))
                       
+
 if __name__ == "__main__":
     main()
