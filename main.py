@@ -98,55 +98,59 @@ def main():
         # run until exhausted
         while True:
 
+            # grab data for D
+
+            x, match = next(iter_loader, ("",""))
+            if match=="": break
+            x, match = x.cuda(), match.cuda()
+
+
+            _, no_match = next(iter_loader, ("",""))
+            if no_match=="": break
+            no_match = no_match.cuda()
+            
+            z = torch.rand(x.shape[0], 100).cuda()
+            fake = G(z, x).detach()
+
             # clear grad in D
 
             D.zero_grad()
 
-            # grad of real: y matched with x
+            # grad of match
 
-            x, y = next(iter_loader, ("",""))
-            if y=="": break
-            x, y = x.cuda(), y.cuda()
+            o = D(x, match)
+            errD_match = criterion(o, o.new_ones(o.shape))
+            errD_match.backward()
 
-            o = D(x, y)
-            errD_real = criterion(o, o.new_ones(o.shape))
-            errD_real.backward()
+            # grad of no_match
 
-            # grad of fake: y not matched with x
-
-            _, y = next(iter_loader, ("",""))
-            if y=="": break
-            y = y.cuda()
-
-            o = D(x, y)
+            o = D(x, no_match)
             errD_no_match = criterion(o, o.new_zeros(o.shape))
             errD_no_match.backward()
 
-            # grad of fake: generated y
+            # grad of fake
 
-            z = torch.rand(x.shape[0], 100).cuda()
-            y = G(z, x)
-            y = y.detach()
-
-            o = D(x, y)
-            errD_gen = criterion(o, o.new_zeros(o.shape))
-            errD_gen.backward()
+            o = D(x, fake)
+            errD_fake = criterion(o, o.new_zeros(o.shape))
+            errD_fake.backward()
 
             # update D
 
             D_opt.step()
 
 
-            # clear grad in G
-
-            G.zero_grad()
-            
-            # grad of G
+            # grab data for G
 
             x, gt = next(iter_loader, ("",""))
             if x=="": break
             z = torch.rand(x.shape[0], 100)
             z, x, gt = z.cuda(), x.cuda(), gt.cuda()
+
+            # clear grad in G
+
+            G.zero_grad()
+            
+            # grad of G
 
             y = G(z, x)
             o = D(x, y)
@@ -171,10 +175,10 @@ def main():
 
             # track performance 
 
-            errD = {"real": errD_real,
+            errD = {"real": errD_match,
                     "no_match": errD_no_match,
-                    "gen": errD_gen,
-                    "all": errD_real + errD_no_match + errD_gen}
+                    "gen": errD_fake,
+                    "all": errD_match + errD_no_match + errD_fake}
             writer.add_scalars("err/D", errD, step)
             writer.add_scalar("err/G", errG, step)
             writer.add_scalar("err/mae", mae, step)
