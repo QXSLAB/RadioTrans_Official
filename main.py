@@ -55,7 +55,7 @@ def main():
 
     # check data
     fixed, real_batch = next(iter(tloader))
-    real_img = make_grid(real_batch, normalize=True)
+    real_img = make_grid(real_batch[:64], normalize=True)
     writer.add_image("real", real_img)
 
     # setup loss
@@ -66,9 +66,18 @@ def main():
     D = CGAN_D().cuda()
 
     # visulize model
-    input_G = torch.rand(fixed.shape[0], 100).cuda(), fixed.cuda()
-    input_D = fixed.cuda(), G(*input_G)
-    writer.add_graph(D, input_D)
+    class CGAN(nn.Module):
+        def __init__(self, G, D):
+            super(CGAN, self).__init__()
+            self.G = G
+            self.D = D
+        def forward(self, x):
+            z = torch.rand(x.shape[0], 100).cuda()
+            y = self.G(z, x)
+            o = self.D(x, y)
+            return o
+    cgan = CGAN(G,D)
+    writer.add_graph(cgan, fixed.cuda())
 
     # apply weight init
     G.apply(weight_init)
@@ -183,7 +192,7 @@ def main():
 
             z = torch.rand(fixed.shape[0], 100)
             y = G(z.cuda(), fixed.cuda())
-            fake_img = make_grid(y, normalize=True)
+            fake_img = make_grid(y[:64], normalize=True)
             writer.add_image("fake", fake_img, e)
            
             torch.save(G.state_dict(), 
