@@ -55,6 +55,7 @@ def main():
 
     # check data
     fixed, real_batch = next(iter(tloader))
+    fixed, real_batch = fixed.cuda(), real_batch.cuda()
     real_img = make_grid(real_batch[:64], normalize=True)
     writer.add_image("real", real_img)
 
@@ -77,7 +78,7 @@ def main():
             o = self.D(x, y)
             return o
     cgan = CGAN(G,D)
-    writer.add_graph(cgan, fixed.cuda())
+    writer.add_graph(cgan, fixed)
 
     # apply weight init
     G.apply(weight_init)
@@ -152,7 +153,7 @@ def main():
             errG = criterion(o, o.new_ones(o.shape))
             errG.backward()
 
-            mse = l1_loss(gt.view(-1,4096), y)
+            mae = l1_loss(gt.view(-1,4096), y)
             
             # update G
 
@@ -176,7 +177,7 @@ def main():
                     "all": errD_real + errD_no_match + errD_gen}
             writer.add_scalars("err/D", errD, step)
             writer.add_scalar("err/G", errG, step)
-            writer.add_scalar("err/mse", mse, step)
+            writer.add_scalar("err/mae", mae, step)
 
 
         # save model
@@ -190,10 +191,11 @@ def main():
 
             # check output
 
-            z = torch.rand(fixed.shape[0], 100)
-            y = G(z.cuda(), fixed.cuda())
+            z = torch.rand(fixed.shape[0], 100).cuda()
+            y = G(z, fixed).reshape(-1, 1, 64, 64)
+            mae = l1_loss(y, real_batch)
             fake_img = make_grid(y[:64], normalize=True)
-            writer.add_image("fake", fake_img, e)
+            writer.add_image("fake/{0}/{1}".format(e, mae), fake_img)
            
             torch.save(G.state_dict(), 
                         os.path.join(experiment, "G_{}.pt".format(e)))
