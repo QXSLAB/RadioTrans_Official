@@ -91,7 +91,7 @@ def main():
     # record global step
     step = 0
 
-    for e in range(100):
+    for e in range(1000):
         
         iter_loader = iter(tloader)
         
