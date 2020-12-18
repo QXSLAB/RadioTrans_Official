@@ -22,7 +22,7 @@ def visulize_weight_grad(writer, model, step):
 
 def main():
 
-    trail = "mlp_init"
+    trail = "mlp_epoch1e4"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
@@ -91,7 +91,7 @@ def main():
     # record global step
     step = 0
 
-    for e in range(1000):
+    for e in range(10000):
         
         iter_loader = iter(tloader)
         
