@@ -1,13 +1,17 @@
+"""
+    process raw data
+"""
+
 import os
 import re
-import torch
+from functools import cmp_to_key
 from PIL import Image
 import numpy as np
-from functools import cmp_to_key
-import torch.nn.functional as F
+import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
+
 
 def param_norm(raw):
 
@@ -21,7 +25,7 @@ def param_norm(raw):
         [output]
         out: shape (batch, 4)
     """
-    
+
     minimum = raw.min(axis=0, keepdims=True)
     maximum = raw.max(axis=0, keepdims=True)
     out = (raw-minimum)/(maximum-minimum)
@@ -45,16 +49,16 @@ def to_power_map(source, target, image_size):
         filename: transmit parameter
         pixel: power on grid
     """
-    
+
     # make target folder
     if os.path.exists(target):
-        y = input("{} exists, overwrite?[Y/N]".format(target))
-        if y.lower()=="y":
+        yes = input("{} exists, overwrite?[Y/N]".format(target))
+        if yes.lower() == "y":
             os.system("trash {}".format(target))
         else:
             exit("make a new folder")
     os.mkdir(target)
-    
+
     # read transmit parameter
     param = []
     with open(os.path.join(source, 'parameter.log'), 'r') as f:
@@ -66,18 +70,18 @@ def to_power_map(source, target, image_size):
             numbers = re.findall(r'-?\d+\.?\d*', l)
             sample.extend(map(float, numbers))
     param = np.array(param)
-    param = param_norm(param[:,:4])
+    param = param_norm(param[:, :4])
 
     # read recieved power
     root, dirs, _ = list(os.walk(os.path.join(source, 'out')))[0]
     # sort in simulation order
-    for d in sorted(dirs, key=cmp_to_key(lambda x,y: float(x)-float(y))):
-            
+    for d in sorted(dirs, key=cmp_to_key(lambda x, y: float(x)-float(y))):
+
         print("processing folder {}".format(d))
 
         # select power file
         _, _, files = list(os.walk(os.path.join(root, d)))[0]
-        fn = list(filter(lambda f: f.find("power")>=0, files))[0]
+        fn = list(filter(lambda f: f.find("power") >= 0, files))[0]
 
         power = []
         with open(os.path.join(root, d, fn), 'r') as f:
@@ -95,19 +99,17 @@ def to_power_map(source, target, image_size):
 class PowerSet(Dataset):
 
     """
-        dataset used in pytorch 
+        dataset used in pytorch
     """
 
     def __init__(self, target, transform):
-        
+
         self.root, _, self.files = list(os.walk(target))[0]
         self.transform = transform
 
-
     def __len__(self):
-        
-        return len(self.files)
 
+        return len(self.files)
 
     def __getitem__(self, index):
 
@@ -115,19 +117,19 @@ class PowerSet(Dataset):
 
         y = Image.open(os.path.join(self.root, x))
         y = self.transform(y)
-        
+
         x = re.findall(r"-?\d\.?\d*e?-?\+?\d*", x)
         x = list(map(float, x))
         x = torch.tensor(x)
-        
+
         return x, y
 
 
 if __name__ == '__main__':
 
-    #source = '/home/dell/hdd/space_effect_raw/112112'
-    #target = '/home/dell/hdd/space_effect_png'
-    #to_power_map(source, target, 112)
+    # source = '/home/dell/hdd/space_effect_raw/112112'
+    # target = '/home/dell/hdd/space_effect_png'
+    # to_power_map(source, target, 112)
 
     dset = PowerSet("/home/dell/hdd/space_effect_png",
                     transforms.ToTensor())

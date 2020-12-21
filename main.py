@@ -1,18 +1,35 @@
+"""
+    main file
+"""
+
 import os
+from math import floor
 import torch
 import torch.nn as nn
 from torch.nn.functional import l1_loss
-from math import floor
 from torch.optim import Adam
-from raw import PowerSet
 from torch.utils.data import random_split, DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 from torchvision.utils import make_grid, save_image
-from torch.utils.tensorboard import SummaryWriter
+from raw import PowerSet
 from model import CGAN_G, CGAN_D, weight_init
 
 
+def quality(img, match, metric):
+
+    """
+        evaluate generated image
+    """
+
+    return metric(img.view(-1), match.view(-1))
+
+
 def visulize_weight_grad(writer, model, step):
+
+    """
+        visualize weight and grad in tensorboard
+    """
 
     for tag, value in model.named_parameters():
         tag = tag.replace(".", "/")
@@ -22,14 +39,14 @@ def visulize_weight_grad(writer, model, step):
 
 def main():
 
-    trail = "mlp_epoch1e4"
+    trail = "format_code"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
     # make dir to save result
     if os.path.exists(experiment):
-        y = input("folder {}, overwrite? [Y/N]:".format(experiment))
-        if y.lower()=="y":
+        yes = input("folder {}, overwrite? [Y/N]:".format(experiment))
+        if yes.lower() == "y":
             os.system("trash {}".format(experiment))
         else:
             exit("make new folder")
@@ -45,19 +62,19 @@ def main():
                         transforms.ToTensor(),
                         transforms.Normalize((0.5,), (0.5,))
                     ]))
-    tl = floor(0.8*len(dset))
-    tset, vset = random_split(dset, [tl, len(dset)-tl])
-    tloader = DataLoader(tset, batch_size=128, 
-                            shuffle=True, num_workers=4,
-                            drop_last=True)
-    vloader = DataLoader(vset, batch_size=128, 
-                            shuffle=False, num_workers=4)
+    train_l = floor(0.8*len(dset))
+    tset, vset = random_split(dset, [train_l, len(dset)-train_l])
+    tloader = DataLoader(tset, batch_size=128,
+                         shuffle=True, num_workers=4,
+                         drop_last=True)
+    # vloader = DataLoader(vset, batch_size=128,
+    #                      shuffle=False, num_workers=4)
 
     # check data
     fixed, real_batch = next(iter(tloader))
     fixed, real_batch = fixed.cuda(), real_batch.cuda()
-    real_img = make_grid(real_batch[:64], normalize=True)
-    writer.add_image("real", real_img)
+    grid_img = make_grid(real_batch[:64], normalize=True)
+    writer.add_image("real", grid_img)
 
     # setup loss
     criterion = nn.BCELoss()
@@ -66,18 +83,22 @@ def main():
     G = CGAN_G().cuda()
     D = CGAN_D().cuda()
 
-    # visulize model
     class CGAN(nn.Module):
+        """
+            for model visualization
+        """
         def __init__(self, G, D):
             super(CGAN, self).__init__()
             self.G = G
             self.D = D
-        def forward(self, x):
-            z = torch.rand(x.shape[0], 100).cuda()
-            y = self.G(z, x)
-            o = self.D(x, y)
-            return o
-    cgan = CGAN(G,D)
+        def forward(self, param):
+            noise = torch.rand(param.shape[0], 100).cuda()
+            img = self.G(noise, param)
+            flag = self.D(param, img)
+            return flag
+
+    # visulize model
+    cgan = CGAN(G, D)
     writer.add_graph(cgan, fixed)
 
     # apply weight init
@@ -85,32 +106,33 @@ def main():
     D.apply(weight_init)
 
     # set optimizer
-    G_opt = Adam(G.parameters(), lr=2e-4, betas=(0.5,0.999))
-    D_opt = Adam(D.parameters(), lr=2e-4, betas=(0.5,0.999))
+    G_opt = Adam(G.parameters(), lr=2e-4, betas=(0.5, 0.999))
+    D_opt = Adam(D.parameters(), lr=2e-4, betas=(0.5, 0.999))
 
     # record global step
     step = 0
 
     for e in range(10000):
-        
+
         iter_loader = iter(tloader)
-        
+
         # run until exhausted
         while True:
 
             # grab data for D
 
-            x, match = next(iter_loader, ("",""))
-            if match=="": break
-            x, match = x.cuda(), match.cuda()
+            param, match = next(iter_loader, ("", ""))
+            if match == "":
+                break
+            param, match = param.cuda(), match.cuda()
 
-
-            _, no_match = next(iter_loader, ("",""))
-            if no_match=="": break
+            _, no_match = next(iter_loader, ("", ""))
+            if no_match == "":
+                break
             no_match = no_match.cuda()
-            
-            z = torch.rand(x.shape[0], 100).cuda()
-            fake = G(z, x).detach()
+
+            noise = torch.rand(param.shape[0], 100).cuda()
+            fake = G(noise, param).detach()
 
             # clear grad in D
 
@@ -118,62 +140,65 @@ def main():
 
             # grad of match
 
-            o = D(x, match)
-            errD_match = criterion(o, o.new_ones(o.shape))
+            flag = D(param, match)
+            errD_match = criterion(flag, flag.new_ones(flag.shape))
             errD_match.backward()
 
             # grad of no_match
 
-            o = D(x, no_match)
-            errD_no_match = criterion(o, o.new_zeros(o.shape))
+            flag = D(param, no_match)
+            errD_no_match = criterion(flag, flag.new_zeros(flag.shape))
             errD_no_match.backward()
 
             # grad of fake
 
-            o = D(x, fake)
-            errD_fake = criterion(o, o.new_zeros(o.shape))
+            flag = D(param, fake)
+            errD_fake = criterion(flag, flag.new_zeros(flag.shape))
             errD_fake.backward()
 
             # update D
 
             D_opt.step()
 
-
             # grab data for G
 
-            x, gt = next(iter_loader, ("",""))
-            if x=="": break
-            z = torch.rand(x.shape[0], 100)
-            z, x, gt = z.cuda(), x.cuda(), gt.cuda()
+            param, match = next(iter_loader, ("", ""))
+            if param == "":
+                break
+            noise = torch.rand(param.shape[0], 100)
+            noise = noise.cuda()
+            param = param.cuda()
+            match = match.cuda()
 
             # clear grad in G
 
             G.zero_grad()
-            
+
             # grad of G
 
-            y = G(z, x)
-            o = D(x, y)
-            errG = criterion(o, o.new_ones(o.shape))
+            img = G(noise, param)
+            flag = D(param, img)
+            errG = criterion(flag, flag.new_ones(flag.shape))
             errG.backward()
 
-            mae = l1_loss(gt.view(-1,4096), y)
-            
+            # generation quality
+            metric = quality(img, match, l1_loss)
+
             # update G
 
             G_opt.step()
 
-            
             # update global step
 
             step += 1
-            if step % 10 == 9: continue
+            if step % 10 == 9:
+                continue
 
             # track progress
 
             print("Epoch [{}] Global [{}]".format(e, step), end="\r")
 
-            # track performance 
+            # track performance
 
             errD = {"real": errD_match,
                     "no_match": errD_no_match,
@@ -181,12 +206,11 @@ def main():
                     "all": errD_match + errD_no_match + errD_fake}
             writer.add_scalars("err/D", errD, step)
             writer.add_scalar("err/G", errG, step)
-            writer.add_scalar("err/mae", mae, step)
-
+            writer.add_scalar("err/mae", metric, step)
 
         # save model
 
-        if e%10 == 9:
+        if e % 10 == 9:
 
             # check weight
 
@@ -195,17 +219,17 @@ def main():
 
             # check output
 
-            z = torch.rand(fixed.shape[0], 100).cuda()
-            y = G(z, fixed).reshape(-1, 1, 64, 64)
-            mae = l1_loss(y, real_batch)
-            fake_img = make_grid(y[:64], normalize=True)
-            writer.add_image("fake/{0}/{1}".format(e, mae), fake_img)
-           
-            torch.save(G.state_dict(), 
-                        os.path.join(experiment, "G_{}.pt".format(e)))
-            torch.save(D.state_dict(), 
-                        os.path.join(experiment, "D_{}.pt".format(e)))
-                      
+            noise = torch.rand(fixed.shape[0], 100).cuda()
+            img = G(noise, fixed)
+            metric = quality(img, real_batch, l1_loss)
+            fake_img = make_grid(img[:64], normalize=True)
+            writer.add_image("fake/{0}/{1}".format(e, metric), fake_img)
+
+            torch.save(G.state_dict(),
+                       os.path.join(experiment, "G_{}.pt".format(e)))
+            torch.save(D.state_dict(),
+                       os.path.join(experiment, "D_{}.pt".format(e)))
+
 
 if __name__ == "__main__":
     main()
