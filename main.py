@@ -28,7 +28,7 @@ def quality(img, match, metric):
     return metric(img.view(-1), match.view(-1))
 
 
-def display_quality(grid, qlty):
+def display_quality(grid, metric, qlty):
 
     """
         display quality in image grid
@@ -40,7 +40,8 @@ def display_quality(grid, qlty):
     draw = ImageDraw.Draw(grid_pil)
     font = ImageFont.truetype("/usr/share/fonts/truetype/"
                               "dejavu/DejaVuSansMono.ttf", size=30)
-    draw.text((0, 0), "quality {0:.5f}".format(qlty), font=font)
+    draw.text((0, 0), "{0} {1:.5f}".format(metric.__name__, qlty),
+              fill=(0, 255, 0), font=font)
 
     return grid_pil
 
@@ -51,36 +52,51 @@ def visualize_weight_grad(writer, model, step):
         visualize weight and grad in tensorboard
     """
 
+    cls = model.__class__.__name__
     for tag, value in model.named_parameters():
         tag = tag.replace(".", "/")
+        tag = "{}/{}".format(cls, tag)
         writer.add_histogram("weight/"+tag, value, step)
         writer.add_histogram("grad/"+tag, value.grad, step)
 
 
-def visualize_img(G, fixed_batch, metric, writer=None, msg=None):
+def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
     """
         visualize and qualify generated image
     """
 
+    # generate fake image
     param, match = fixed_batch
     noise = torch.rand(param.shape[0], 100).cuda()
-    img = G(noise, param).reshape(-1, 1, 64, 64)
-    fake_grid = make_grid(img[:64], normalize=True)
+    fake = G(noise, param).reshape(-1, 1, 64, 64)
+    fake_grid = make_grid(fake[:64], normalize=True)
 
-    qlty = quality(img, match, metric)
-    qlty_grid = display_quality(fake_grid, qlty)
+    # compare with match image
+    match_grid = make_grid(match[:64], normalize=True)
+    diff_grid = torch.abs(fake_grid - match_grid)
+
+    # quality annotation
+    qlty = quality(fake, match, metric)
+    fake_pil = display_quality(fake_grid, metric, qlty)
+    diff_pil = display_quality(diff_grid, metric, qlty)
+    match_pil = display_quality(match_grid, metric, qlty)
 
     if not writer:
-        qlty_grid.save("best.png")
+        fake_pil.save(os.path.join(msg, "best.png"))
+        diff_pil.save(os.path.join(msg, "diff.png"))
+        match_pil.save(os.path.join(msg, "match.png"))
     else:
-        qlty_grid = np.asarray(qlty_grid).transpose(2, 0, 1)
-        writer.add_image(msg, qlty_grid)
+        fake_np = np.asarray(fake_pil).transpose(2, 0, 1)
+        writer.add_image("fake/{}".format(msg), fake_np)
+
+        diff_np = np.asarray(diff_pil).transpose(2, 0, 1)
+        writer.add_image("diff/{}".format(msg), diff_np)
 
 
 def main():
 
-    trail = "dcgan"
+    trail = "dcgan_imp_func"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
@@ -112,10 +128,10 @@ def main():
     #                      shuffle=False, num_workers=4)
 
     # check data
-    fixed, real_batch = next(iter(tloader))
-    fixed, real_batch = fixed.cuda(), real_batch.cuda()
-    real_grid = make_grid(real_batch[:64], normalize=True)
-    writer.add_image("real", real_grid)
+    fixed, match_batch = next(iter(tloader))
+    fixed, match_batch = fixed.cuda(), match_batch.cuda()
+    match_grid = make_grid(match_batch[:64], normalize=True)
+    writer.add_image("match", match_grid)
 
     # setup loss
     criterion = nn.BCELoss()
@@ -237,24 +253,25 @@ def main():
                 # track progress
                 print("Epoch [{0:5d}] Global [{1:8d}] "
                       "errD [{2:2.5f}/{3:2.5f}/{4:2.5f}] "
-                      "errG [{5:2.5f}]".format(e, step,
-                          errD_match, errD_no_match, errD_fake, errG))
+                      "errG [{5:2.5f}] {6} [{7:2.5f}]".format(e, step,
+                          errD_match, errD_no_match, errD_fake,
+                          errG, metric.__name__, qlty))
 
                 # track performance
-                errD = {"real": errD_match,
+                errD = {"match": errD_match,
                         "no_match": errD_no_match,
-                        "gen": errD_fake,
+                        "fake": errD_fake,
                         "all": errD_match + errD_no_match + errD_fake}
                 writer.add_scalars("err/D", errD, step)
                 writer.add_scalar("err/G", errG, step)
-                writer.add_scalar("err/quality", qlty, step)
+                writer.add_scalar("err/{}".format(metric.__name__), qlty, step)
 
             if qlty < best:
 
                 best = qlty
 
                 # visualize best image
-                visualize_img(G, (fixed, real_batch), metric)
+                visualize_gen(G, (fixed, match_batch), metric, experiment)
 
                 # save best model
                 torch.save(G.state_dict(),
@@ -269,8 +286,8 @@ def main():
             visualize_weight_grad(writer, D, step)
 
             # track image generation
-            visualize_img(G, (fixed, real_batch), metric,
-                          writer, "fake/{}".format(e))
+            visualize_gen(G, (fixed, match_batch), metric,
+                          "{}".format(e), writer)
 
 
 if __name__ == "__main__":
