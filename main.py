@@ -19,6 +19,48 @@ from model import CGAN_G, CGAN_D, weight_init
 from model import C_DCGAN_G, C_DCGAN_D
 
 
+def setup_seed(seed):
+
+    """
+        make result reproducible
+    """
+
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    np.random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+
+
+def sample_from_data(loader):
+
+    """
+        sample dataloader looply
+    """
+
+    itera, epoch = iter(loader), 0
+    while True:
+        try:
+            param, match = next(itera)
+        except:
+            epoch += 1
+            itera = iter(loader)
+            param, match = next(itera)
+        finally:
+            yield param.cuda(), match.cuda(), epoch
+
+
+def sample_from_gen(G, param):
+
+    """
+        generate fake data using G
+    """
+
+    noise = torch.rand(param.shape[0], 100).cuda()
+    fake = G(noise, param)
+
+    return fake
+
+
 def quality(img, match, metric):
 
     """
@@ -68,8 +110,8 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
     # generate fake image
     param, match = fixed_batch
-    noise = torch.rand(param.shape[0], 100).cuda()
-    fake = G(noise, param).reshape(-1, 1, 64, 64)
+    fake = sample_from_gen(G, param)
+    fake = fake.reshape(-1, 1, 64, 64)
     fake_grid = make_grid(fake[:64], normalize=True)
 
     # compare with match image
@@ -96,7 +138,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "dcgan_imp_func"
+    trail = "imp_func_test"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
@@ -108,6 +150,9 @@ def main():
         else:
             exit("make new folder")
     os.mkdir(experiment)
+
+    # make result reproducible
+    setup_seed(99)
 
     # setup tensorboard
     writer = SummaryWriter(experiment)
@@ -124,12 +169,14 @@ def main():
     tloader = DataLoader(tset, batch_size=128,
                          shuffle=True, num_workers=4,
                          drop_last=True)
-    # vloader = DataLoader(vset, batch_size=128,
-    #                      shuffle=False, num_workers=4)
+    vloader = DataLoader(vset, batch_size=128,
+                         shuffle=False, num_workers=4)
+
+    # sample train data looply
+    train_sampler = sample_from_data(tloader)
 
     # check data
-    fixed, match_batch = next(iter(tloader))
-    fixed, match_batch = fixed.cuda(), match_batch.cuda()
+    fixed, match_batch, _ = next(sample_from_data(vloader))
     match_grid = make_grid(match_batch[:64], normalize=True)
     writer.add_image("match", match_grid)
 
@@ -152,9 +199,8 @@ def main():
             self.G = G
             self.D = D
         def forward(self, param):
-            noise = torch.rand(param.shape[0], 100).cuda()
-            img = self.G(noise, param)
-            flag = self.D(param, img)
+            fake = sample_from_gen(self.G, param)
+            flag = self.D(param, fake)
             return flag
 
     # visulize model
@@ -166,11 +212,11 @@ def main():
     D.apply(weight_init)
 
     # set optimizer
+    # TODO change beta1
     G_opt = Adam(G.parameters(), lr=2e-4, betas=(0.5, 0.999))
     D_opt = Adam(D.parameters(), lr=2e-4, betas=(0.5, 0.999))
 
-    # record global step
-    step = 0
+    # TODO lr decay
 
     # recored best result
     best = float("inf")
@@ -178,27 +224,16 @@ def main():
     # setup metric
     metric = l1_loss
 
-    for e in range(10000):
+    for step in range(450000):
 
-        iter_loader = iter(tloader)
-
-        # run until exhausted
-        while True:
+        # train D N times
+        for _ in range(5):
 
             # grab data for D
-
-            param, match = next(iter_loader, ("", ""))
-            if match == "":
-                break
-            param, match = param.cuda(), match.cuda()
-
-            _, no_match = next(iter_loader, ("", ""))
-            if no_match == "":
-                break
-            no_match = no_match.cuda()
-
-            noise = torch.rand(param.shape[0], 100).cuda()
-            fake = G(noise, param).detach()
+            param, match, _ = next(train_sampler)
+            _, no_match, _ = next(train_sampler)
+            fake = sample_from_gen(G, param)
+            fake = fake.detach()
 
             # clear grad in D
             D.zero_grad()
@@ -221,65 +256,58 @@ def main():
             # update D
             D_opt.step()
 
-            # grab data for G
-            param, match = next(iter_loader, ("", ""))
-            if param == "":
-                break
-            noise = torch.rand(param.shape[0], 100)
-            noise = noise.cuda()
-            param = param.cuda()
-            match = match.cuda()
+        # train G 1 time
 
-            # clear grad in G
-            G.zero_grad()
+        # grab data for G
+        param, match, epoch = next(train_sampler)
 
-            # grad of G
-            img = G(noise, param)
-            flag = D(param, img)
-            errG = criterion(flag, flag.new_ones(flag.shape))
-            errG.backward()
+        # clear grad in G
+        G.zero_grad()
 
-            # generation quality
-            qlty = quality(img, match, metric)
+        # grad of G
+        fake = sample_from_gen(G, param)
+        flag = D(param, fake)
+        errG = criterion(flag, flag.new_ones(flag.shape))
+        errG.backward()
 
-            # update G
-            G_opt.step()
+        # generation quality
+        qlty = quality(fake, match, metric)
 
-            # update global step
-            step += 1
+        # update G
+        G_opt.step()
 
-            if step % 10 == 9:
+        if step % 10 == 9:
 
-                # track progress
-                print("Epoch [{0:5d}] Global [{1:8d}] "
-                      "errD [{2:2.5f}/{3:2.5f}/{4:2.5f}] "
-                      "errG [{5:2.5f}] {6} [{7:2.5f}]".format(e, step,
-                          errD_match, errD_no_match, errD_fake,
-                          errG, metric.__name__, qlty))
+            # track progress
+            print("Epoch [{0:5d}] Global [{1:8d}] "
+                  "errD [{2:2.5f}/{3:2.5f}/{4:2.5f}] "
+                  "errG [{5:2.5f}] {6} [{7:2.5f}]".format(epoch, step,
+                   errD_match, errD_no_match, errD_fake,
+                   errG, metric.__name__, qlty))
 
-                # track performance
-                errD = {"match": errD_match,
-                        "no_match": errD_no_match,
-                        "fake": errD_fake,
-                        "all": errD_match + errD_no_match + errD_fake}
-                writer.add_scalars("err/D", errD, step)
-                writer.add_scalar("err/G", errG, step)
-                writer.add_scalar("err/{}".format(metric.__name__), qlty, step)
+            # track performance
+            errD = {"match": errD_match,
+                    "no_match": errD_no_match,
+                    "fake": errD_fake,
+                    "all": errD_match + errD_no_match + errD_fake}
+            writer.add_scalars("err/D", errD, step)
+            writer.add_scalar("err/G", errG, step)
+            writer.add_scalar("err/{}".format(metric.__name__), qlty, step)
 
-            if qlty < best:
+        if qlty < best:
 
-                best = qlty
+            best = qlty
 
-                # visualize best image
-                visualize_gen(G, (fixed, match_batch), metric, experiment)
+            # visualize best image
+            visualize_gen(G, (fixed, match_batch), metric, experiment)
 
-                # save best model
-                torch.save(G.state_dict(),
-                           os.path.join(experiment, "G_best.pt"))
-                torch.save(D.state_dict(),
-                           os.path.join(experiment, "D_best.pt"))
+            # save best model
+            torch.save(G.state_dict(),
+                       os.path.join(experiment, "G_best.pt"))
+            torch.save(D.state_dict(),
+                       os.path.join(experiment, "D_best.pt"))
 
-        if e % 10 == 9:
+        if step % 100 == 99:
 
             # track weight and grad
             visualize_weight_grad(writer, G, step)
@@ -287,7 +315,7 @@ def main():
 
             # track image generation
             visualize_gen(G, (fixed, match_batch), metric,
-                          "{}".format(e), writer)
+                          "step {} epoch {}".format(step, epoch), writer)
 
 
 if __name__ == "__main__":
