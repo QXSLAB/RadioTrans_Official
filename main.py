@@ -9,7 +9,7 @@ from PIL import Image, ImageFont, ImageDraw
 import torch
 import torch.nn as nn
 from torch.nn.functional import l1_loss
-from torch.optim import Adam
+from torch.optim import RMSprop 
 from torch.utils.data import random_split, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
@@ -138,7 +138,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "imp_func_test"
+    trail = "wgan"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
@@ -166,10 +166,10 @@ def main():
                     ]))
     train_l = floor(0.8*len(dset))
     tset, vset = random_split(dset, [train_l, len(dset)-train_l])
-    tloader = DataLoader(tset, batch_size=128,
+    tloader = DataLoader(tset, batch_size=64,
                          shuffle=True, num_workers=4,
                          drop_last=True)
-    vloader = DataLoader(vset, batch_size=128,
+    vloader = DataLoader(vset, batch_size=64,
                          shuffle=False, num_workers=4)
 
     # sample train data looply
@@ -179,9 +179,6 @@ def main():
     fixed, match_batch, _ = next(sample_from_data(vloader))
     match_grid = make_grid(match_batch[:64], normalize=True)
     writer.add_image("match", match_grid)
-
-    # setup loss
-    criterion = nn.BCELoss()
 
     # setup model
     # G = CGAN_G().cuda()
@@ -213,8 +210,8 @@ def main():
 
     # set optimizer
     # TODO change beta1
-    G_opt = Adam(G.parameters(), lr=2e-4, betas=(0.5, 0.999))
-    D_opt = Adam(D.parameters(), lr=2e-4, betas=(0.5, 0.999))
+    G_opt = RMSprop(G.parameters(), lr=5e-5)
+    D_opt = RMSprop(D.parameters(), lr=5e-5)
 
     # TODO lr decay
 
@@ -226,8 +223,14 @@ def main():
 
     for step in range(450000):
 
-        # train D N times
-        for _ in range(5):
+        # set D more frequently at specific point
+        if step < 25 or step % 500 == 0:
+            D_iter = 100
+        else:
+            D_iter = 5
+
+        # train D D_iter times
+        for _ in range(D_iter):
 
             # grab data for D
             param, match, _ = next(train_sampler)
@@ -240,21 +243,25 @@ def main():
 
             # grad of match
             flag = D(param, match)
-            errD_match = criterion(flag, flag.new_ones(flag.shape))
-            errD_match.backward()
+            errD_match = flag.mean()
+            errD_match.backward(torch.full_like(errD_match, -1))
 
             # grad of no_match
             flag = D(param, no_match)
-            errD_no_match = criterion(flag, flag.new_zeros(flag.shape))
-            errD_no_match.backward()
+            errD_no_match = -1 * flag.mean()
+            errD_no_match.backward(torch.full_like(errD_no_match, -1))
 
             # grad of fake
             flag = D(param, fake)
-            errD_fake = criterion(flag, flag.new_zeros(flag.shape))
-            errD_fake.backward()
+            errD_fake = -1 * flag.mean()
+            errD_fake.backward(torch.full_like(errD_fake, -1))
 
             # update D
             D_opt.step()
+
+            # clamp parameter to a cube
+            for p in D.parameters():
+                p.data.clamp_(-0.01, 0.01)
 
         # train G 1 time
 
@@ -267,8 +274,8 @@ def main():
         # grad of G
         fake = sample_from_gen(G, param)
         flag = D(param, fake)
-        errG = criterion(flag, flag.new_ones(flag.shape))
-        errG.backward()
+        errG = -1 * flag.mean()
+        errG.backward(torch.full_like(errG, 1))
 
         # generation quality
         qlty = quality(fake, match, metric)

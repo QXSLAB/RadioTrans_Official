@@ -1,2 +1,17 @@
 this is repo for Fixed Scene Radio Propagation Effect (FSRPE) deduction
 
+DONE  mlp
+DONE  DCGAN
+      WGAN
+      WGAN-GP
+      WGAN spectrum nomalization
+      Projection
+      Improved GAN
+..    BigGAN
+      SAGAN, Self-attention generative adversarial networks, HingeLoss
+      G with class-conditional BatchNorm, A learned representation for artistic style
+      SGAN, Stacked Generative Adversarial Networks
+      SplittingGAN
+      AC-GAN
+NOT  StyleGAN2-ADA, use augmentation
+NOT  MHingeGAN, use classification

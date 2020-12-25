@@ -198,8 +198,8 @@ class C_DCGAN_D(nn.Module):
             nn.BatchNorm2d(1024),
             nn.LeakyReLU(0.2),
             # (batch, 1024, 4, 4)
-            nn.Conv2d(1024, 1, 4, 1, 0),
-            nn.Sigmoid())  # (batch, 1, 1, 1)
+            nn.Conv2d(1024, 1, 4, 1, 0))  # (batch, 1, 1, 1)
+            
 
     def forward(self, param, img):
 
