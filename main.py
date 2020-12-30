@@ -7,9 +7,10 @@ from math import floor
 import numpy as np
 from PIL import Image, ImageFont, ImageDraw
 import torch
+from torch import autograd
 import torch.nn as nn
 from torch.nn.functional import l1_loss
-from torch.optim import RMSprop 
+from torch.optim import Adam
 from torch.utils.data import random_split, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
@@ -59,6 +60,30 @@ def sample_from_gen(G, param):
     fake = G(noise, param)
 
     return fake
+
+
+def grad_penalty(D, param, match, fake):
+
+    """
+        gradient penalty for wgan-gp
+    """
+
+    # grab data from sampling distribution
+    epsl = torch.rand(match.shape[0], 1, 1, 1).cuda()
+    interp = epsl*match + (1-epsl)*fake
+    interp.requires_grad = True
+
+    # grad w.r.t. x in sampling distribution
+    flag = D(param, interp)
+    grad = autograd.grad(outputs=flag, inputs=interp,
+                         grad_outputs=torch.full_like(flag, 1),
+                         create_graph=True, retain_graph=True, only_inputs=True)
+    grad = grad[0].view(match.shape[0], -1)
+
+    # two side grad penalty
+    penalty = ((grad.norm(p=2, dim=1)-1)**2).mean()
+
+    return penalty
 
 
 def quality(img, match, metric):
@@ -138,7 +163,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "wgan_remove_no_match"
+    trail = "wgan_gp"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
@@ -210,8 +235,8 @@ def main():
 
     # set optimizer
     # TODO change beta1
-    G_opt = RMSprop(G.parameters(), lr=5e-5)
-    D_opt = RMSprop(D.parameters(), lr=5e-5)
+    G_opt = Adam(G.parameters(), lr=1e-4, betas=(0, 0.9))
+    D_opt = Adam(D.parameters(), lr=1e-4, betas=(0, 0.9))
 
     # TODO lr decay
 
@@ -242,20 +267,21 @@ def main():
 
             # grad of match
             flag = D(param, match)
-            errD_match = flag.mean()
-            errD_match.backward(torch.full_like(errD_match, -1))
+            errD_match = -1 * flag.mean()
+            errD_match.backward(torch.full_like(errD_match, 1))
 
             # grad of fake
             flag = D(param, fake)
-            errD_fake = -1 * flag.mean()
-            errD_fake.backward(torch.full_like(errD_fake, -1))
+            errD_fake = flag.mean()
+            errD_fake.backward(torch.full_like(errD_fake, 1))
+
+            # grad of grad penalty
+            penalty = grad_penalty(D, param, match, fake)
+            errD_grad = 10*penalty
+            errD_grad.backward()
 
             # update D
             D_opt.step()
-
-            # clamp parameter to a cube
-            for p in D.parameters():
-                p.data.clamp_(-0.01, 0.01)
 
         # train G 1 time
 
@@ -277,28 +303,12 @@ def main():
         # update G
         G_opt.step()
 
-        if step % 10 == 9:
-
-            # track progress
-            print("Epoch [{0:5d}] Global [{1:8d}] "
-                  "errD [{2:2.5f}/{3:2.5f}] "
-                  "errG [{4:2.5f}] {5} [{6:2.5f}]".format(epoch, step,
-                   errD_match, errD_fake,
-                   errG, metric.__name__, qlty))
-
-            # track performance
-            errD = {"match": errD_match,
-                    "fake": errD_fake,
-                    "all": errD_match + errD_fake}
-            writer.add_scalars("err/D", errD, step)
-            writer.add_scalar("err/G", errG, step)
-            writer.add_scalar("err/{}".format(metric.__name__), qlty, step)
-
+        # save best result
         if qlty < best:
 
             best = qlty
 
-            # visualize best image
+            # visualize best fake
             visualize_gen(G, (fixed, match_batch), metric, experiment)
 
             # save best model
@@ -307,13 +317,36 @@ def main():
             torch.save(D.state_dict(),
                        os.path.join(experiment, "D_best.pt"))
 
+        # track progress
+        if step % 10 == 9:
+
+            print("Epoch [{:5d}] Global [{:8d}] "
+                  "errD [{:2.5f}/{:2.5f}/{:2.5f}] "
+                  "errG [{:2.5f}] {} [{:2.5f}/{:2.5f}]".format(epoch, step,
+                   errD_match, errD_fake, errD_grad,
+                   errG, metric.__name__, qlty, best))
+
+        # visualize performance curve
         if step % 100 == 99:
 
-            # track weight and grad
+            errD = {"match": errD_match,
+                    "fake": errD_fake,
+                    "grad": errD_grad,
+                    "all": errD_match + errD_fake +  errD_grad}
+            errM = {"qlty": qlty,
+                    "best": best}
+            writer.add_scalars("err/D", errD, step)
+            writer.add_scalar("err/G", errG, step)
+            writer.add_scalars("err/{}".format(metric.__name__), errM, step)
+
+        # visualize weight, grad, fake
+        if step % 1000 == 999:
+
+            # visualize weight and grad
             visualize_weight_grad(writer, G, step)
             visualize_weight_grad(writer, D, step)
 
-            # track image generation
+            # visualize fake
             visualize_gen(G, (fixed, match_batch), metric,
                           "step {} epoch {}".format(step, epoch), writer)
 
