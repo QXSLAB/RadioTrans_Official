@@ -138,7 +138,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "wgan"
+    trail = "wgan_remove_no_match"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
@@ -234,7 +234,6 @@ def main():
 
             # grab data for D
             param, match, _ = next(train_sampler)
-            _, no_match, _ = next(train_sampler)
             fake = sample_from_gen(G, param)
             fake = fake.detach()
 
@@ -245,11 +244,6 @@ def main():
             flag = D(param, match)
             errD_match = flag.mean()
             errD_match.backward(torch.full_like(errD_match, -1))
-
-            # grad of no_match
-            flag = D(param, no_match)
-            errD_no_match = -1 * flag.mean()
-            errD_no_match.backward(torch.full_like(errD_no_match, -1))
 
             # grad of fake
             flag = D(param, fake)
@@ -287,16 +281,15 @@ def main():
 
             # track progress
             print("Epoch [{0:5d}] Global [{1:8d}] "
-                  "errD [{2:2.5f}/{3:2.5f}/{4:2.5f}] "
-                  "errG [{5:2.5f}] {6} [{7:2.5f}]".format(epoch, step,
-                   errD_match, errD_no_match, errD_fake,
+                  "errD [{2:2.5f}/{3:2.5f}] "
+                  "errG [{4:2.5f}] {5} [{6:2.5f}]".format(epoch, step,
+                   errD_match, errD_fake,
                    errG, metric.__name__, qlty))
 
             # track performance
             errD = {"match": errD_match,
-                    "no_match": errD_no_match,
                     "fake": errD_fake,
-                    "all": errD_match + errD_no_match + errD_fake}
+                    "all": errD_match + errD_fake}
             writer.add_scalars("err/D", errD, step)
             writer.add_scalar("err/G", errG, step)
             writer.add_scalar("err/{}".format(metric.__name__), qlty, step)
