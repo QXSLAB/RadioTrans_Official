@@ -187,12 +187,15 @@ class C_DCGAN_D(nn.Module):
         self.main = nn.Sequential(
             # (batch, 128, 32, 32)
             nn.Conv2d(128, 256, 4, 2, 1),
+            nn.LayerNorm([16, 16]),
             nn.LeakyReLU(0.2),
             # (batch, 256, 16, 16)
             nn.Conv2d(256, 512, 4, 2, 1),
+            nn.LayerNorm([8, 8]),
             nn.LeakyReLU(0.2),
             # (batch, 512, 8, 8)
             nn.Conv2d(512, 1024, 4, 2, 1),
+            nn.LayerNorm([4, 4]),
             nn.LeakyReLU(0.2),
             # (batch, 1024, 4, 4)
             nn.Conv2d(1024, 1, 4, 1, 0))  # (batch, 1, 1, 1)
