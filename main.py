@@ -163,7 +163,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "wgan_gp_LayerNorm"
+    trail = "wgan_gp_InstNorm"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
