@@ -11,6 +11,7 @@ from torch import autograd
 import torch.nn as nn
 from torch.nn.functional import l1_loss
 from torch.optim import Adam
+from torch.optim.lr_scheduler import MultiplicativeLR
 from torch.utils.data import random_split, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
@@ -18,6 +19,7 @@ from torchvision.utils import make_grid, save_image
 from raw import PowerSet
 from model import CGAN_G, CGAN_D, weight_init
 from model import C_DCGAN_G, C_DCGAN_D
+from model import C_ResNet_G, C_ResNet_D
 
 
 def setup_seed(seed):
@@ -77,7 +79,8 @@ def grad_penalty(D, param, match, fake):
     flag = D(param, interp)
     grad = autograd.grad(outputs=flag, inputs=interp,
                          grad_outputs=torch.full_like(flag, 1),
-                         create_graph=True, retain_graph=True, only_inputs=True)
+                         create_graph=True, retain_graph=True,
+                         only_inputs=True)
     grad = grad[0].view(match.shape[0], -1)
 
     # two side grad penalty
@@ -163,7 +166,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "wgan_gp_InstNorm"
+    trail = "wgan_gp_ResNet"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
@@ -208,8 +211,8 @@ def main():
     # setup model
     # G = CGAN_G().cuda()
     # D = CGAN_D().cuda()
-    G = C_DCGAN_G().cuda()
-    D = C_DCGAN_D().cuda()
+    G = C_ResNet_G().cuda()
+    D = C_ResNet_D().cuda()
 
     # difine visualization model
     class CGAN(nn.Module):
@@ -239,6 +242,8 @@ def main():
     D_opt = Adam(D.parameters(), lr=1e-4, betas=(0, 0.9))
 
     # TODO lr decay
+    G_scheduler = MultiplicativeLR(G_opt, lambda step: 1-step*1e-5)
+    D_scheduler = MultiplicativeLR(D_opt, lambda step: 1-step*1e-5)
 
     # recored best result
     best = float("inf")
@@ -246,7 +251,7 @@ def main():
     # setup metric
     metric = l1_loss
 
-    for step in range(450000):
+    for step in range(100_000):
 
         # set D more frequently at specific point
         if step < 25 or step % 500 == 0:
@@ -303,6 +308,10 @@ def main():
         # update G
         G_opt.step()
 
+        # adjust lr
+        #G_scheduler.step()
+        #D_scheduler.step()
+
         # save best result
         if qlty < best:
 
@@ -332,7 +341,7 @@ def main():
             errD = {"match": errD_match,
                     "fake": errD_fake,
                     "grad": errD_grad,
-                    "all": errD_match + errD_fake +  errD_grad}
+                    "all": errD_match + errD_fake + errD_grad}
             errM = {"qlty": qlty,
                     "best": best}
             writer.add_scalars("err/D", errD, step)
