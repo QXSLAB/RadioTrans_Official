@@ -166,7 +166,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "wgan_gp_ResNet"
+    trail = "wgan_gp_ResNet_xavier"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
