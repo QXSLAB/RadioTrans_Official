@@ -166,7 +166,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "wgan_gp_ResNet_xavier_bs512"
+    trail = "wgan_gp_unet"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
@@ -194,10 +194,10 @@ def main():
                     ]))
     train_l = floor(0.8*len(dset))
     tset, vset = random_split(dset, [train_l, len(dset)-train_l])
-    tloader = DataLoader(tset, batch_size=512,
+    tloader = DataLoader(tset, batch_size=256,
                          shuffle=True, num_workers=16,
                          drop_last=True)
-    vloader = DataLoader(vset, batch_size=512,
+    vloader = DataLoader(vset, batch_size=256,
                          shuffle=False, num_workers=16)
 
     # sample train data looply

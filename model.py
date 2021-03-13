@@ -4,6 +4,8 @@
 
 import torch
 import torch.nn as nn
+import torchvision.transforms.functional as F
+import numpy as np
 
 
 def weight_init(m):
@@ -214,82 +216,100 @@ class C_DCGAN_D(nn.Module):
         return flag
 
 
+class DoubleC(nn.Module):
+    """
+        (conv2d->BN->ReLU)*2
+    """
+    def __init__(self, in_ch, out_ch):
+        super().__init__()
+        self.main = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, 1, 1),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(),
+            nn.Conv2d(out_ch, out_ch, 3, 1, 1),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(),)
+    def forward(self, x):
+        return self.main(x)
+
+
+class Down(nn.Module):
+    """
+        Down scale then double conv
+    """
+    # TODO use maxpooling
+    def __init__(self, in_ch, out_ch):
+        super().__init__()
+        self.main = nn.Sequential(
+            nn.MaxPool2d(2),
+            DoubleC(in_ch, out_ch))
+    def forward(self, x):
+        return self.main(x)
+
+
+class Up(nn.Module):
+    """
+        Up scale then double conv
+    """
+    def __init__(self, in_ch, out_ch):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_ch, in_ch//2, 2, 2, 0)
+        self.conv = DoubleC(in_ch, out_ch)
+
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        x = torch.cat([x1, x2], dim=1)
+        return self.conv(x)
+
+
 class C_ResNet_G(nn.Module):
 
     """
         generator of cgan-wgan_gp-resnet
         ref Improved Training of Wasserstein GANs.pdf (Appendix F)
-    """
-
-    class BasicBlock(nn.Module):
-
-        """
-            block used to build ResNet-like model
-        """
-
-        def __init__(self):
-
-            super(C_ResNet_G.BasicBlock, self).__init__()
-
-            self.proj = nn.ConvTranspose2d(128, 128, 3, 2, 1, 1)
-
-            self.main = nn.Sequential(
-                # (batch, 128, w, w)
-                nn.BatchNorm2d(128),
-                nn.ReLU(),
-                nn.ConvTranspose2d(128, 128, 3, 2, 1, 1),
-                # (batch, 128, 2*w, 2*w)
-                nn.BatchNorm2d(128),
-                nn.ReLU(),
-                nn.ConvTranspose2d(128, 128, 3, 1, 1))
-                # (batch, 128, 2*w, 2*w)
-
-        def forward(self, x):
-
-            skip = self.proj(x)
-            out = self.main(x)
-
-            return out+skip
+    """ 
 
     def __init__(self):
 
         super(C_ResNet_G, self).__init__()
 
-        # TODO change to Linear
-        # (batch, 100, 1, 1)
-        self.deconv1_1 = nn.ConvTranspose2d(100, 64, 4, 1, 0)
-        # (batch, 64, 4, 4)
+        self.geo = torch.from_numpy(np.load("mask.npy")).unsqueeze(0)
+        self.geo = F.resize(self.geo, (64, 64)).reshape(1, 1, 64, 64)
 
-        # TODO change to Linear
-        # (batch, 4, 1, 1)
-        self.deconv1_2 = nn.ConvTranspose2d(4, 64, 4, 1, 0)
-        # (batch, 64, 4, 4)
+        self.inc = DoubleC(1+4, 64)  # batch x 64 x 64 x 64
+        self.down1 = Down(64, 128)  # batch x 128 x 32 x 32
+        self.down2 = Down(128, 256)  # batch x 256 x 16 x 16
+        self.down3 = Down(256, 512)  # batch x 512 x 8 x 8
+        self.down4 = Down(512, 1024)  # batch x 1024 x 4 x 4
 
-        self.main = nn.Sequential(
-            # (batch, 128, 4, 4)
-            C_ResNet_G.BasicBlock(),
-            # (batch, 128, 8, 8)
-            C_ResNet_G.BasicBlock(),
-            # (batch, 128, 16, 16)
-            C_ResNet_G.BasicBlock(),
-            # (batch, 128, 32, 32)
-            C_ResNet_G.BasicBlock(),
-            # (batch, 128, 64, 64)
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 1, 3, 1, 1),
-            nn.Tanh())  # (batch, 1, 64, 64)
+        self.up4 = Up(1024, 512)  # batch x 512 x 8 x 8
+        self.up3 = Up(512, 256)  # batch x 256 x 16 x 16
+        self.up2 = Up(256, 128)  # batch x 128 x 32 x 32
+        self.up1 = Up(128, 64)  # batch x 64 x 64 x 64
+        
+        self.outConv = nn.Sequential(
+            nn.Conv2d(64, 1, 1, 1, 0),)
 
     def forward(self, noise, param):
 
-        noise = noise.reshape(-1, 100, 1, 1)
-        param = param.reshape(-1, 4, 1, 1)
-        feat1 = self.deconv1_1(noise)
-        feat2 = self.deconv1_2(param)
-        feature = torch.cat([feat1, feat2], dim=1)
-        img = self.main(feature)
+        bs, ch = param.shape
+        param_map = param.new_ones((bs, ch, 64, 64))
+        param = param.reshape(bs, ch, 1, 1).expand(-1, -1, 64, 64)
+        param_map = param*param_map
+        geo = self.geo.expand(bs, -1, -1, -1).to(param.device)
+        x = torch.cat([param_map, geo], dim=1)
 
-        return img
+        x1 = self.inc(x)
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+        x = self.up4(x5, x4)
+        x = self.up3(x, x3)
+        x = self.up2(x, x2)
+        x = self.up1(x, x1)
+
+        return self.outConv(x)
 
 
 class C_ResNet_D(nn.Module):
