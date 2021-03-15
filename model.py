@@ -288,7 +288,8 @@ class C_ResNet_G(nn.Module):
         self.up1 = Up(128, 64)  # batch x 64 x 64 x 64
         
         self.outConv = nn.Sequential(
-            nn.Conv2d(64, 1, 1, 1, 0),)
+            nn.Conv2d(64, 1, 1, 1, 0),
+            nn.Tanh())
 
     def forward(self, noise, param):
 

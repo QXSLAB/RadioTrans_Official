@@ -166,7 +166,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "wgan_gp_unet"
+    trail = "wgan_gp_unet_tanh"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
