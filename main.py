@@ -9,7 +9,7 @@ from PIL import Image, ImageFont, ImageDraw
 import torch
 from torch import autograd
 import torch.nn as nn
-from torch.nn.functional import l1_loss
+from torch.nn.functional import l1_loss, mse_loss
 from torch.optim import Adam
 from torch.optim.lr_scheduler import MultiplicativeLR
 from torch.utils.data import random_split, DataLoader
@@ -166,7 +166,8 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "wgan_gp_unet_tanh_bs64"
+    trail = "mse_unet_tanh_bs64"
+    os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
@@ -212,38 +213,29 @@ def main():
     # G = CGAN_G().cuda()
     # D = CGAN_D().cuda()
     G = C_ResNet_G().cuda()
-    D = C_ResNet_D().cuda()
 
     # difine visualization model
     class CGAN(nn.Module):
         """
             for model visualization
         """
-        def __init__(self, G, D):
+        def __init__(self, G):
             super(CGAN, self).__init__()
             self.G = G
-            self.D = D
         def forward(self, param):
             fake = sample_from_gen(self.G, param)
-            flag = self.D(param, fake)
-            return flag
+            return fake
 
     # visulize model
-    cgan = CGAN(G, D)
+    cgan = CGAN(G)
     writer.add_graph(cgan, fixed)
 
     # apply weight init
     G.apply(weight_init)
-    D.apply(weight_init)
 
     # set optimizer
     # TODO change beta1
     G_opt = Adam(G.parameters(), lr=1e-4, betas=(0, 0.9))
-    D_opt = Adam(D.parameters(), lr=1e-4, betas=(0, 0.9))
-
-    # TODO lr decay
-    G_scheduler = MultiplicativeLR(G_opt, lambda step: 1-step*1e-5)
-    D_scheduler = MultiplicativeLR(D_opt, lambda step: 1-step*1e-5)
 
     # recored best result
     best = float("inf")
@@ -253,54 +245,16 @@ def main():
 
     for step in range(100_000):
 
-        # set D more frequently at specific point
-        if step < 25 or step % 500 == 0:
-            D_iter = 100
-        else:
-            D_iter = 5
-
-        # train D D_iter times
-        for _ in range(D_iter):
-
-            # grab data for D
-            param, match, _ = next(train_sampler)
-            fake = sample_from_gen(G, param)
-            fake = fake.detach()
-
-            # clear grad in D
-            D.zero_grad()
-
-            # grad of match
-            flag = D(param, match)
-            errD_match = -1 * flag.mean()
-            errD_match.backward(torch.full_like(errD_match, 1))
-
-            # grad of fake
-            flag = D(param, fake)
-            errD_fake = flag.mean()
-            errD_fake.backward(torch.full_like(errD_fake, 1))
-
-            # grad of grad penalty
-            penalty = grad_penalty(D, param, match, fake)
-            errD_grad = 10*penalty
-            errD_grad.backward()
-
-            # update D
-            D_opt.step()
-
-        # train G 1 time
+        # clear grad in G
+        G.zero_grad()
 
         # grab data for G
         param, match, epoch = next(train_sampler)
 
-        # clear grad in G
-        G.zero_grad()
-
         # grad of G
         fake = sample_from_gen(G, param)
-        flag = D(param, fake)
-        errG = -1 * flag.mean()
-        errG.backward(torch.full_like(errG, 1))
+        errG = mse_loss(fake, match)
+        errG.backward()
 
         # generation quality
         qlty = quality(fake, match, metric)
@@ -323,29 +277,21 @@ def main():
             # save best model
             torch.save(G.state_dict(),
                        os.path.join(experiment, "G_best.pt"))
-            torch.save(D.state_dict(),
-                       os.path.join(experiment, "D_best.pt"))
 
         # track progress
         if step % 10 == 9:
 
             print("Epoch [{:5d}] Global [{:8d}] "
-                  "errD [{:2.5f}/{:2.5f}/{:2.5f}] "
                   "errG [{:2.5f}] {} [{:2.5f}/{:2.5f}]".format(epoch, step,
-                   errD_match, errD_fake, errD_grad,
                    errG, metric.__name__, qlty, best))
 
         # visualize performance curve
         if step % 100 == 99:
 
-            errD = {"match": errD_match,
-                    "fake": errD_fake,
-                    "grad": errD_grad,
-                    "all": errD_match + errD_fake + errD_grad}
+            errD = {"mse": errG}
             errM = {"qlty": qlty,
                     "best": best}
             writer.add_scalars("err/D", errD, step)
-            writer.add_scalar("err/G", errG, step)
             writer.add_scalars("err/{}".format(metric.__name__), errM, step)
 
         # visualize weight, grad, fake
@@ -353,7 +299,6 @@ def main():
 
             # visualize weight and grad
             visualize_weight_grad(writer, G, step)
-            visualize_weight_grad(writer, D, step)
 
             # visualize fake
             visualize_gen(G, (fixed, match_batch), metric,
