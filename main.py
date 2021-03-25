@@ -17,9 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 from torchvision.utils import make_grid, save_image
 from raw import PowerSet
-from model import CGAN_G, CGAN_D, weight_init
-from model import C_DCGAN_G, C_DCGAN_D
-from model import C_ResNet_G, C_ResNet_D
+from model import Unet, weight_init
 
 
 def setup_seed(seed):
@@ -32,61 +30,6 @@ def setup_seed(seed):
     torch.cuda.manual_seed(seed)
     np.random.seed(seed)
     torch.backends.cudnn.deterministic = True
-
-
-def sample_from_data(loader):
-
-    """
-        sample dataloader looply
-    """
-
-    itera, epoch = iter(loader), 0
-    while True:
-        try:
-            param, match = next(itera)
-        except:
-            epoch += 1
-            itera = iter(loader)
-            param, match = next(itera)
-        finally:
-            yield param.cuda(), match.cuda(), epoch
-
-
-def sample_from_gen(G, param):
-
-    """
-        generate fake data using G
-    """
-
-    noise = torch.rand(param.shape[0], 100).cuda()
-    fake = G(noise, param)
-
-    return fake
-
-
-def grad_penalty(D, param, match, fake):
-
-    """
-        gradient penalty for wgan-gp
-    """
-
-    # grab data from sampling distribution
-    epsl = torch.rand(match.shape[0], 1, 1, 1).cuda()
-    interp = epsl*match + (1-epsl)*fake
-    interp.requires_grad = True
-
-    # grad w.r.t. x in sampling distribution
-    flag = D(param, interp)
-    grad = autograd.grad(outputs=flag, inputs=interp,
-                         grad_outputs=torch.full_like(flag, 1),
-                         create_graph=True, retain_graph=True,
-                         only_inputs=True)
-    grad = grad[0].view(match.shape[0], -1)
-
-    # two side grad penalty
-    penalty = ((grad.norm(p=2, dim=1)-1)**2).mean()
-
-    return penalty
 
 
 def quality(img, match, metric):
@@ -138,7 +81,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
     # generate fake image
     param, match = fixed_batch
-    fake = sample_from_gen(G, param)
+    fake = G(param)
     fake = fake.reshape(-1, 1, 64, 64)
     fake_grid = make_grid(fake[:64], normalize=True)
 
@@ -166,8 +109,8 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "mse_unet_tanh_bs64"
-    os.environ["CUDA_VISIBLE_DEVICES"]="1"
+    trail = "unet_study"
+    os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
@@ -201,108 +144,99 @@ def main():
     vloader = DataLoader(vset, batch_size=64,
                          shuffle=False, num_workers=4)
 
-    # sample train data looply
-    train_sampler = sample_from_data(tloader)
-
     # check data
-    fixed, match_batch, _ = next(sample_from_data(vloader))
-    match_grid = make_grid(match_batch[:64], normalize=True)
+    fixed_param, fixed_match = next(iter(vloader))
+    fixed_param, fixed_match = fixed_param.cuda(), fixed_match.cuda()
+    match_grid = make_grid(fixed_match[:64], normalize=True)
     writer.add_image("match", match_grid)
 
     # setup model
-    # G = CGAN_G().cuda()
-    # D = CGAN_D().cuda()
-    G = C_ResNet_G().cuda()
-
-    # difine visualization model
-    class CGAN(nn.Module):
-        """
-            for model visualization
-        """
-        def __init__(self, G):
-            super(CGAN, self).__init__()
-            self.G = G
-        def forward(self, param):
-            fake = sample_from_gen(self.G, param)
-            return fake
+    G = Unet().cuda()
 
     # visulize model
-    cgan = CGAN(G)
-    writer.add_graph(cgan, fixed)
+    writer.add_graph(G, fixed_param)
 
     # apply weight init
     G.apply(weight_init)
 
     # set optimizer
-    # TODO change beta1
     G_opt = Adam(G.parameters(), lr=1e-4, betas=(0, 0.9))
 
     # recored best result
     best = float("inf")
 
     # setup metric
-    metric = l1_loss
+    metric = mse_loss
+    step = 0
 
-    for step in range(100_000):
+    for epoch in range(100_000):
 
-        # clear grad in G
-        G.zero_grad()
+        # training
+        G.train()
+        for param, match in tloader:
 
-        # grab data for G
-        param, match, epoch = next(train_sampler)
+            param, match = param.cuda(), match.cuda()
 
-        # grad of G
-        fake = sample_from_gen(G, param)
-        errG = mse_loss(fake, match)
-        errG.backward()
+            # clear grad in G
+            G.zero_grad()
 
-        # generation quality
-        qlty = quality(fake, match, metric)
+            # grad of G
+            fake = G(param)
+            train_loss = metric(fake, match)
+            train_loss.backward()
 
-        # update G
-        G_opt.step()
+            # update G
+            G_opt.step()
+            step += 1
 
-        # adjust lr
-        #G_scheduler.step()
-        #D_scheduler.step()
+            # track progress
+            if step % 10 == 9:
+
+                print("Epoch [{:5d}] Global [{:8d}] {} "
+                      "train_loss [{:2.5f}] ".format(epoch, step,
+                       metric.__name__, train_loss))
+
+            # visualize performance curve
+            if step % 100 == 99:
+
+                writer.add_scalars("err/{}".format(metric.__name__),
+                                   {"train": train_loss}, step)
+
+            # visualize weight, grad
+            if step % 1000 == 999:
+
+                # visualize weight and grad
+                visualize_weight_grad(writer, G, step)
+
+        # validating
+        G.eval()
+        with torch.no_grad():
+            val_loss = []
+            for param, match in vloader:
+                param, match = param.cuda(), match.cuda()
+                fake = G(param)
+                val_loss.append(metric(fake, match).item())
+            val_loss = sum(val_loss)/len(val_loss)
 
         # save best result
-        if qlty < best:
+        if val_loss < best:
 
-            best = qlty
+            best = val_loss
 
             # visualize best fake
-            visualize_gen(G, (fixed, match_batch), metric, experiment)
+            visualize_gen(G, (fixed_param, fixed_match), metric, experiment)
 
             # save best model
             torch.save(G.state_dict(),
                        os.path.join(experiment, "G_best.pt"))
 
-        # track progress
-        if step % 10 == 9:
-
-            print("Epoch [{:5d}] Global [{:8d}] "
-                  "errG [{:2.5f}] {} [{:2.5f}/{:2.5f}]".format(epoch, step,
-                   errG, metric.__name__, qlty, best))
-
-        # visualize performance curve
-        if step % 100 == 99:
-
-            errD = {"mse": errG}
-            errM = {"qlty": qlty,
-                    "best": best}
-            writer.add_scalars("err/D", errD, step)
-            writer.add_scalars("err/{}".format(metric.__name__), errM, step)
-
-        # visualize weight, grad, fake
-        if step % 1000 == 999:
-
-            # visualize weight and grad
-            visualize_weight_grad(writer, G, step)
-
-            # visualize fake
-            visualize_gen(G, (fixed, match_batch), metric,
-                          "step {} epoch {}".format(step, epoch), writer)
+        
+        print("Epoch [{:5d}] Global [{:8d}] {} "
+              "train_loss [{:2.5f}] val_loss[{:2.5f}/{:2.5f}]".format(epoch, step,
+              metric.__name__, train_loss, val_loss, best))
+        
+        writer.add_scalars("err/{}".format(metric.__name__),
+                           {"val": val_loss, "best": best}, step)
 
 
 if __name__ == "__main__":
