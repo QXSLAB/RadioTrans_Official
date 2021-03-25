@@ -109,7 +109,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "unet_l1_loss"
+    trail = "unet_mse_loss"
     os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
@@ -165,7 +165,7 @@ def main():
     # recored best result
     best = float("inf")
 
-    metric = l1_loss
+    metric = mse_loss
 
     step = 0
 
