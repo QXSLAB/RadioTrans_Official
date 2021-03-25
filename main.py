@@ -109,7 +109,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "unet_study"
+    trail = "unet_l1_loss"
     os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
@@ -165,8 +165,8 @@ def main():
     # recored best result
     best = float("inf")
 
-    # setup metric
-    metric = mse_loss
+    metric = l1_loss
+
     step = 0
 
     for epoch in range(100_000):
@@ -182,6 +182,8 @@ def main():
 
             # grad of G
             fake = G(param)
+            train_l1 = l1_loss(fake, match)
+            train_mse = mse_loss(fake, match)
             train_loss = metric(fake, match)
             train_loss.backward()
 
@@ -192,15 +194,14 @@ def main():
             # track progress
             if step % 10 == 9:
 
-                print("Epoch [{:5d}] Global [{:8d}] {} "
-                      "train_loss [{:2.5f}] ".format(epoch, step,
-                       metric.__name__, train_loss))
+                print("Epoch [{:5d}] Global [{:8d}] "
+                      "train_loss [{:2.5f}/{:2.5f}] ".format(epoch, step,
+                       train_l1, train_mse))
 
             # visualize performance curve
             if step % 100 == 99:
 
-                writer.add_scalars("err/{}".format(metric.__name__),
-                                   {"train": train_loss}, step)
+                writer.add_scalars("err/loss", {"train_l1": train_l1, "train_mse": train_mse}, step)
 
             # visualize weight, grad
             if step % 1000 == 999:
@@ -211,12 +212,16 @@ def main():
         # validating
         G.eval()
         with torch.no_grad():
-            val_loss = []
+            val_l1, val_mse, val_loss = [], [], []
             for param, match in vloader:
                 param, match = param.cuda(), match.cuda()
                 fake = G(param)
+                val_l1.append(l1_loss(fake, match).item())
+                val_mse.append(mse_loss(fake, match).item())
                 val_loss.append(metric(fake, match).item())
-            val_loss = sum(val_loss)/len(val_loss)
+            val_l1= sum(val_l1)/len(val_l1)
+            val_mse= sum(val_mse)/len(val_mse)
+            val_loss= sum(val_loss)/len(val_loss)
 
         # save best result
         if val_loss < best:
@@ -232,11 +237,10 @@ def main():
 
         
         print("Epoch [{:5d}] Global [{:8d}] {} "
-              "train_loss [{:2.5f}] val_loss[{:2.5f}/{:2.5f}]".format(epoch, step,
-              metric.__name__, train_loss, val_loss, best))
+                "train_loss [{:2.5f}/{:2.5f}] val_loss[{:2.5f}/{:2.5f}]".format(epoch, step,
+              metric.__name__, train_l1, train_mse, val_l1, val_mse))
         
-        writer.add_scalars("err/{}".format(metric.__name__),
-                           {"val": val_loss, "best": best}, step)
+        writer.add_scalars("err/loss", {"val_l1": val_l1, "val_mse": val_mse}, step)
 
 
 if __name__ == "__main__":
