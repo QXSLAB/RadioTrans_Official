@@ -117,3 +117,54 @@ class Unet(nn.Module):
         x = self.up1(x, x1)
 
         return self.outConv(x)
+
+
+class SpreadNet(nn.Module):
+
+    def __init__(self, kernel, channel):
+
+        super().__init__()
+
+        self.geo = torch.from_numpy(np.load("mask.npy")).unsqueeze(0)
+        self.geo = F.resize(self.geo, (64, 64)).reshape(1, 1, 64, 64)
+
+        self.env = nn.Sequential(
+            nn.Conv2d(1, channel, kernel, 1, (kernel-1)//2),
+            nn.ReLU())
+
+        self.pow = nn.Sequential(
+            nn.Conv2d(1, channel, kernel, 1, (kernel-1)//2),
+            nn.ReLU())
+
+        self.comb = nn.Sequential(
+            nn.Conv2d(2+2*channel, 1, 1, 1, 0))
+
+    def forward(self, param):
+
+        bs = param.shape[0]
+        f, x, y, a = param.chunk(4, 1)
+
+        x = x.reshape(-1)
+        y = y.reshape(-1)
+        x_idx = ((x*0.5+0.5)*63).round().long().cuda()
+        y_idx = ((y*0.5+0.5)*63).round().long().cuda()
+
+        bs_idx = torch.arange(bs).long().cuda()
+
+        power = param.new_zeros((bs, 1, 64, 64))
+        power[bs_idx, 0, x_idx, y_idx] = 1
+
+        angle = param.new_zeros((bs, 1, 64, 64))
+        angle[bs_idx, 0, x_idx, y_idx] = a.reshape(bs)
+
+        freq = param.new_ones((bs, 1, 64, 64))
+        freq = freq*f.reshape(bs, 1, 1, 1).expand(-1, -1, 64, 64)
+
+        geo = self.geo.expand(bs, -1, -1, -1).float().cuda()
+
+        for _ in range(5):
+            feat = self.env(geo)
+            power = self.pow(power)
+            power = self.comb(torch.cat([power, angle, freq, feat], dim=1))
+
+        return power

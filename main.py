@@ -17,7 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 from torchvision.utils import make_grid, save_image
 from raw import PowerSet
-from model import Unet, weight_init
+from model import Unet, SpreadNet, weight_init
 
 
 def setup_seed(seed):
@@ -109,7 +109,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "unet_mse_loss"
+    trail = "spreadnet_mse_loss"
     os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
@@ -151,7 +151,7 @@ def main():
     writer.add_image("match", match_grid)
 
     # setup model
-    G = Unet().cuda()
+    G = SpreadNet(3, 1024).cuda()
 
     # visulize model
     writer.add_graph(G, fixed_param)
