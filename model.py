@@ -82,7 +82,7 @@ class Unet(nn.Module):
         self.geo = torch.from_numpy(np.load("mask.npy")).unsqueeze(0)
         self.geo = F.resize(self.geo, (64, 64)).reshape(1, 1, 64, 64)
 
-        self.inc = DoubleC(1+4, 64)  # batch x 64 x 64 x 64
+        self.inc = DoubleC(4, 64)  # batch x 64 x 64 x 64
         self.down1 = Down(64, 128)  # batch x 128 x 32 x 32
         self.down2 = Down(128, 256)  # batch x 256 x 16 x 16
         self.down3 = Down(256, 512)  # batch x 512 x 8 x 8
@@ -99,12 +99,28 @@ class Unet(nn.Module):
 
     def forward(self, param):
 
-        bs, ch = param.shape
-        param_map = param.new_ones((bs, ch, 64, 64))
-        param = param.reshape(bs, ch, 1, 1).expand(-1, -1, 64, 64)
-        param_map = param*param_map
-        geo = self.geo.expand(bs, -1, -1, -1).to(param.device)
-        x = torch.cat([param_map, geo], dim=1)
+        bs = param.shape[0]
+        f, x, y, a = param.chunk(4, 1)
+
+        x = x.reshape(-1)
+        y = y.reshape(-1)
+        x_idx = ((x*0.5+0.5)*63).round().long().cuda()
+        y_idx = ((y*0.5+0.5)*63).round().long().cuda()
+
+        bs_idx = torch.arange(bs).long().cuda()
+
+        power = param.new_zeros((bs, 1, 64, 64))
+        power[bs_idx, 0, x_idx, y_idx] = 1
+
+        angle = param.new_zeros((bs, 1, 64, 64))
+        angle[bs_idx, 0, x_idx, y_idx] = a.reshape(bs)
+
+        freq = param.new_ones((bs, 1, 64, 64))
+        freq = freq*f.reshape(bs, 1, 1, 1).expand(-1, -1, 64, 64)
+
+        geo = self.geo.expand(bs, -1, -1, -1).float().cuda()
+        
+        x = torch.cat([power, angle, freq, geo], dim=1)
 
         x1 = self.inc(x)
         x2 = self.down1(x1)

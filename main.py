@@ -109,7 +109,7 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def main():
 
-    trail = "spreadnet_mse_loss"
+    trail = "unet_space_rep_l1"
     os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
@@ -151,7 +151,7 @@ def main():
     writer.add_image("match", match_grid)
 
     # setup model
-    G = SpreadNet(3, 1024).cuda()
+    G = Unet().cuda()
 
     # visulize model
     writer.add_graph(G, fixed_param)
@@ -165,7 +165,7 @@ def main():
     # recored best result
     best = float("inf")
 
-    metric = mse_loss
+    metric = l1_loss
 
     step = 0
 
