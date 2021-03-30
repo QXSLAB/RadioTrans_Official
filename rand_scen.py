@@ -102,7 +102,6 @@ def to_power_map(source, target, image_size):
                     power.append(float(s))
 
             # read landscape
-            
             build_map = np.loadtxt(build_path)
             build_map = np.transpose(build_map)
 
@@ -113,18 +112,18 @@ def to_power_map(source, target, image_size):
 
             power = np.reshape(power, (image_size, image_size))
 
-            plt.imshow(build_map)
-            plt.scatter(loc_x, loc_y, tree_list[:, 3])
-            plt.scatter(x, y, marker="o", s=500, c='r')
-            plt.savefig(os.path.join(target, "{}-landscape.png".format(param)))
-            plt.close()
-            
-            plt.imshow(power)
-            plt.savefig(os.path.join(target, '{}-power.png'.format(param)))
-            plt.close()
+            #plt.imshow(build_map)
+            #plt.scatter(loc_x, loc_y, tree_list[:, 3])
+            #plt.scatter(x, y, marker="o", s=500, c='r')
+            #plt.savefig(os.path.join(target, "{}-landscape.png".format(param)))
+            #plt.close()
+            #
+            #plt.imshow(power)
+            #plt.savefig(os.path.join(target, '{}-power.png'.format(param)))
+            #plt.close()
 
-            import pdb
-            pdb.set_trace()
+            np.savez(os.path.join(target, "{}.npz".format(param)), build_map, tree_map, power, param)
+
 
 class PowerSet(Dataset):
 
@@ -132,10 +131,9 @@ class PowerSet(Dataset):
         dataset used in pytorch
     """
 
-    def __init__(self, target, transform):
+    def __init__(self, target):
 
         self.root, _, self.files = list(os.walk(target))[0]
-        self.transform = transform
 
     def __len__(self):
 
@@ -145,24 +143,20 @@ class PowerSet(Dataset):
 
         x = self.files[index]
 
-        y = Image.open(os.path.join(self.root, x))
-        y = self.transform(y)
+        fz = np.load(os.path.join(self.root, x))
 
-        x = re.findall(r"-?\d\.?\d*e?-?\+?\d*", x)
-        x = list(map(float, x))
-        x = torch.tensor(x)
-
-        return x, y
+        return list(zip(*fz.items()))[1]
 
 
 if __name__ == '__main__':
 
-    source = '/media/qxs/My Passport/random_scenario_simulation'
-    target = '/home/qxs/hdd/random_scen'
-    to_power_map(source, target, 64)
+    #source = '/media/qxs/My Passport/random_scenario_simulation'
+    #target = '/home/qxs/hdd/random_scen'
+    #to_power_map(source, target, 64)
 
-    #dset = PowerSet("/home/dell/hdd/space_effect_png",
-    #                transforms.ToTensor())
-    #dloader = DataLoader(dset)
-    #print(next(iter(dloader)))
-    #print(next(iter(dloader)))
+    dset = PowerSet('/home/qxs/hdd/random_scen')
+    dloader = DataLoader(dset)
+    print(next(iter(dloader)))
+    import pdb
+    pdb.set_trace()
+    print(next(iter(dloader)))
