@@ -68,6 +68,9 @@ def to_power_map(source, target, image_size):
     tree_file = "tree_list.dat"
 
     for root, dirs, _ in os.walk(source):
+
+        dirs = sorted(dirs, key=lambda x: int(x))
+
         for d in dirs:
 
             print("processing folder {}".format(d))
@@ -107,6 +110,12 @@ def to_power_map(source, target, image_size):
             build_map = np.transpose(build_map)
 
             tree_list = np.loadtxt(tree_path)
+
+            coords = tree_list[:, 1:3]
+            anomaly = np.sum(coords>=1000) + np.sum(coords<0)
+            if anomaly>0:
+                continue
+            
             loc_x, loc_y = np.uint(tree_list[:, 1]), np.uint(tree_list[:, 2])
             tree_map = build_map*0
             tree_map[loc_x, loc_y] = tree_list[:, 3]
