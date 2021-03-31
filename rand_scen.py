@@ -93,13 +93,14 @@ def to_power_map(source, target, image_size):
             param = [freq, x, y, z]
             
             # read rx power
-            power = []
+            power, phase = [], []
             with open(power_path, 'r') as f:
                 for l in f:
                     if l[0] == '#':
                         continue
-                    s = re.findall(r'-?\d+\.?\d*', l)[-2]
-                    power.append(float(s))
+                    s = re.findall(r'-?\d+\.?\d*', l)
+                    power.append(float(s[-2]))
+                    phase.append(float(s[-1]))
 
             # read landscape
             build_map = np.loadtxt(build_path)
@@ -111,6 +112,7 @@ def to_power_map(source, target, image_size):
             tree_map[loc_x, loc_y] = tree_list[:, 3]
 
             power = np.reshape(power, (image_size, image_size))
+            phase = np.reshape(phase, (image_size, image_size))
 
             #plt.imshow(build_map)
             #plt.scatter(loc_x, loc_y, tree_list[:, 3])
@@ -122,7 +124,8 @@ def to_power_map(source, target, image_size):
             #plt.savefig(os.path.join(target, '{}-power.png'.format(param)))
             #plt.close()
 
-            np.savez(os.path.join(target, "{}.npz".format(param)), build_map, tree_map, power, param)
+            np.savez(os.path.join(target, "{}.npz".format(param)),
+                     build_map, tree_map, param, power, phase)
 
 
 class PowerSet(Dataset):
@@ -150,13 +153,11 @@ class PowerSet(Dataset):
 
 if __name__ == '__main__':
 
-    #source = '/media/qxs/My Passport/random_scenario_simulation'
-    #target = '/home/qxs/hdd/random_scen'
-    #to_power_map(source, target, 64)
+    source = '/media/qxs/My Passport/random_scenario_simulation'
+    target = '/home/qxs/hdd/random_scen'
+    to_power_map(source, target, 64)
 
-    dset = PowerSet('/home/qxs/hdd/random_scen')
-    dloader = DataLoader(dset)
-    print(next(iter(dloader)))
-    import pdb
-    pdb.set_trace()
-    print(next(iter(dloader)))
+    #dset = PowerSet('/home/qxs/hdd/random_scen')
+    #dloader = DataLoader(dset)
+    #print(next(iter(dloader)))
+    #print(next(iter(dloader)))
