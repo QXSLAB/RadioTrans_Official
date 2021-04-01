@@ -133,7 +133,7 @@ def to_power_map(source, target, image_size):
             #plt.savefig(os.path.join(target, '{}-power.png'.format(param)))
             #plt.close()
 
-            np.savez(os.path.join(target, "{}.npz".format(param)),
+            np.savez(os.path.join(target, "{}-{}.npz".format(int(d), param)),
                      build_map, tree_map, param, power, phase)
 
 
