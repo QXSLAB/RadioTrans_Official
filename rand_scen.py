@@ -16,41 +16,61 @@ import matplotlib
 
 matplotlib.use('Agg')
 
-def param_norm(raw):
+
+def preprocess(build, tree, param, power, phase):
 
     """
-        normalize transmit parameter to [-1,1]
-
         [input]
-        raw: shape (batch, 4), 4 channels contains
-             [center frequency, x location, y location, antenna angle]
+        build 0~100 -> 0~255
+        tree 0~50 -> 0~255
+        z: 30~80 -> 0~255
+        f: 5735000000~5825000000 -> 0~255
 
         [output]
-        out: shape (batch, 4)
+        power: -250~-70 -> 0~255
+        phase: -180~180 -> 0~255
     """
 
-    minimum = raw.min(axis=0, keepdims=True)
-    maximum = raw.max(axis=0, keepdims=True)
-    out = (raw-minimum)/(maximum-minimum)
-    out = (out-0.5)/0.5
+    f, x, y, z = param
 
-    return out
+    print(power.max())
 
+    build = build/100
+    build = np.floor(build*255)
+    build = np.expand_dims(build, axis=0)
+    # shape 1 x 1000 x 1000
+
+    tree = tree/50
+    tree = np.floor(tree*255)
+    tree = np.expand_dims(tree, axis=0)
+    # shape 1 x 1000 x 1000
+
+    z = (z-30)/50
+    z = np.floor(z*255)
+    x_idx = int(x)-1
+    y_idx = int(y)-1
+    source = build*0
+    source[0, x_idx, y_idx] = z
+    # shape 1 x 1000 x 1000
+    
+    f = (f-5735000000)/90000000
+    f = np.floor(f*255)
+    freq = build*0+1
+    freq = freq*f
+
+    land = np.concatenate([build, tree, source, freq], axis=0)
+
+    power = (power+250)/180
+    power = np.floor(power*255)
+
+    phase = (phase+180)/360
+    phase = np.floor(phase*255)
+
+    return land, power, phase
 
 def to_power_map(source, target, image_size):
 
     """
-        convert received power to image
-
-        [input]
-        source: folder saving wireless insite simulation result
-        target: folder saving power-map images
-        image_size: width and height of simulation grid
-
-        [output]
-        power-map saved in target folder
-        filename: transmit parameter
-        pixel: power on grid
     """
 
     # make target folder
@@ -61,6 +81,9 @@ def to_power_map(source, target, image_size):
         else:
             exit("make a new folder")
     os.mkdir(target)
+    os.mkdir(os.path.join(target, "land"))
+    os.mkdir(os.path.join(target, "power"))
+    os.mkdir(os.path.join(target, "phase"))
 
     param_file ="test_prj.STA.xml"
     power_file = os.path.join("STA" ,"test_prj.power.t001_01.r002.p2m")
@@ -107,22 +130,20 @@ def to_power_map(source, target, image_size):
 
             # read landscape
             build_map = np.loadtxt(build_path)
-            build_map = np.transpose(build_map)
-
             tree_list = np.loadtxt(tree_path)
 
             coords = tree_list[:, 1:3]
             anomaly = np.sum(coords>=1000) + np.sum(coords<0)
             if anomaly>0:
-                continue
-            
+                continue            
             loc_x, loc_y = np.uint(tree_list[:, 1]), np.uint(tree_list[:, 2])
             tree_map = build_map*0
             tree_map[loc_x, loc_y] = tree_list[:, 3]
 
             power = np.reshape(power, (image_size, image_size))
             phase = np.reshape(phase, (image_size, image_size))
-
+            
+            #build_map = np.transpose(build_map)
             #plt.imshow(build_map)
             #plt.scatter(loc_x, loc_y, tree_list[:, 3])
             #plt.scatter(x, y, marker="o", s=500, c='r')
@@ -132,9 +153,26 @@ def to_power_map(source, target, image_size):
             #plt.imshow(power)
             #plt.savefig(os.path.join(target, '{}-power.png'.format(param)))
             #plt.close()
+            
+            clip_ano = np.sum(build_map>=100) + \
+                       np.sum(tree_map>=50) + \
+                       np.sum(power>-70)
 
-            np.savez(os.path.join(target, "{}-{}.npz".format(int(d), param)),
-                     build_map, tree_map, param, power, phase)
+            if clip_ano:
+                continue
+
+            land, power, phase = preprocess(build_map, tree_map, param, power, phase)
+
+
+            land_img = Image.fromarray(np.uint8(land.swapaxes(0, 2)), mode='RGBA')
+            land_img.save(os.path.join(target, "land", "{}-{}.png".format(d, param)))
+
+            power_img = Image.fromarray(np.uint8(power))
+            power_img.save(os.path.join(target, "power", "{}-{}.png".format(d, param)))
+
+            phase_img = Image.fromarray(np.uint8(phase))
+            phase_img.save(os.path.join(target, "phase", "{}-{}.png".format(d, param)))
+
 
 
 class PowerSet(Dataset):
@@ -163,10 +201,12 @@ class PowerSet(Dataset):
 if __name__ == '__main__':
 
     source = '/media/qxs/My Passport/random_scenario_simulation'
-    target = '/home/qxs/hdd/random_scen'
+    target = '/home/qxs/hdd/random_scen_img'
     to_power_map(source, target, 64)
 
-    #dset = PowerSet('/home/qxs/hdd/random_scen')
-    #dloader = DataLoader(dset)
-    #print(next(iter(dloader)))
-    #print(next(iter(dloader)))
+    #dset = PowerSet('/home/qxs/hdd/random_scen_1-165841')
+    #dloader = DataLoader(dset, batch_size=512)
+    #import pdb
+    #pdb.set_trace()
+    #xx =  next(iter(dloader))
+    #print(xx)
