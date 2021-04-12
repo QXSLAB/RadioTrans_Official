@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import matplotlib
+import torchvision.transforms.functional as F
 
 matplotlib.use('Agg')
 
@@ -97,8 +98,11 @@ def to_power_map(source, target, image_size):
 
         for d in dirs:
 
-            if int(d)<=303629:
-                continue
+            #if not int(d)==169281:
+            #    continue
+
+            #import pdb
+            #pdb.set_trace()
 
             print("processing folder {}".format(d))
 
@@ -179,6 +183,8 @@ def to_power_map(source, target, image_size):
             phase_img = Image.fromarray(phase)
             phase_img.save(os.path.join(target, "phase", "{}-{}.png".format(d, param)))
 
+            return land, power, phase
+
 
 class PowerSet(Dataset):
 
@@ -188,7 +194,10 @@ class PowerSet(Dataset):
 
     def __init__(self, target):
 
-        self.root, _, self.files = list(os.walk(target))[0]
+        self.land_path = os.path.join(target, "land")
+        self.power_path = os.path.join(target, "power")
+        self.phase_path = os.path.join(target, "phase")
+        _, _, self.files = list(os.walk(self.land_path))[0]
 
     def __len__(self):
 
@@ -198,20 +207,31 @@ class PowerSet(Dataset):
 
         x = self.files[index]
 
-        fz = np.load(os.path.join(self.root, x))
+        land = os.path.join(self.land_path, x)
+        land = Image.open(land)
+        land = F.to_tensor(land)
 
-        return list(zip(*fz.items()))[1]
+        power = os.path.join(self.power_path, x)
+        power = Image.open(power)
+        power = F.to_tensor(power)
+
+        phase = os.path.join(self.phase_path, x)
+        phase = Image.open(phase)
+        phase = F.to_tensor(phase)
+
+        return land, power, phase
 
 
 if __name__ == '__main__':
 
-    source = '/media/qxs/My Passport/random_scenario_simulation'
-    target = '/home/qxs/hdd/random_scen_img_303630'
-    to_power_map(source, target, 64)
-
-    #dset = PowerSet('/home/qxs/hdd/random_scen_1-165841')
-    #dloader = DataLoader(dset, batch_size=512)
-    #import pdb
-    #pdb.set_trace()
-    #xx =  next(iter(dloader))
-    #print(xx)
+    #source = '/media/qxs/My Passport/random_scenario_simulation'
+    #target = '/home/qxs/hdd/test'
+    #to_power_map(source, target, 64)
+    
+    land, power, phase = to_power_map("/home/qxs/hdd/test",
+                 "/home/qxs/hdd/test_res", 64)
+    dset = PowerSet('/home/qxs/hdd/test_res')
+    dloader = DataLoader(dset, batch_size=1)
+    l_t, po_t, ph_t =  next(iter(dloader))
+    import pdb
+    pdb.set_trace()
