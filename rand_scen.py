@@ -33,8 +33,6 @@ def preprocess(build, tree, param, power, phase):
 
     f, x, y, z = param
 
-    print(power.max())
-
     build = build/100
     build = np.floor(build*255)
     build = np.expand_dims(build, axis=0)
@@ -59,12 +57,15 @@ def preprocess(build, tree, param, power, phase):
     freq = freq*f
 
     land = np.concatenate([build, tree, source, freq], axis=0)
+    land = np.uint8(land.swapaxes(0, 2))
 
     power = (power+250)/180
     power = np.floor(power*255)
+    power = np.uint8(power)
 
     phase = (phase+180)/360
     phase = np.floor(phase*255)
+    phase = np.uint8(phase)
 
     return land, power, phase
 
@@ -95,6 +96,9 @@ def to_power_map(source, target, image_size):
         dirs = sorted(dirs, key=lambda x: int(x))
 
         for d in dirs:
+
+            if int(d)<=303629:
+                continue
 
             print("processing folder {}".format(d))
 
@@ -140,6 +144,9 @@ def to_power_map(source, target, image_size):
             tree_map = build_map*0
             tree_map[loc_x, loc_y] = tree_list[:, 3]
 
+            if not len(power)==64*64:
+                continue
+
             power = np.reshape(power, (image_size, image_size))
             phase = np.reshape(phase, (image_size, image_size))
             
@@ -163,16 +170,14 @@ def to_power_map(source, target, image_size):
 
             land, power, phase = preprocess(build_map, tree_map, param, power, phase)
 
-
-            land_img = Image.fromarray(np.uint8(land.swapaxes(0, 2)), mode='RGBA')
+            land_img = Image.fromarray(land, mode='RGBA')
             land_img.save(os.path.join(target, "land", "{}-{}.png".format(d, param)))
 
-            power_img = Image.fromarray(np.uint8(power))
+            power_img = Image.fromarray(power)
             power_img.save(os.path.join(target, "power", "{}-{}.png".format(d, param)))
 
-            phase_img = Image.fromarray(np.uint8(phase))
+            phase_img = Image.fromarray(phase)
             phase_img.save(os.path.join(target, "phase", "{}-{}.png".format(d, param)))
-
 
 
 class PowerSet(Dataset):
@@ -201,7 +206,7 @@ class PowerSet(Dataset):
 if __name__ == '__main__':
 
     source = '/media/qxs/My Passport/random_scenario_simulation'
-    target = '/home/qxs/hdd/random_scen_img'
+    target = '/home/qxs/hdd/random_scen_img_303630'
     to_power_map(source, target, 64)
 
     #dset = PowerSet('/home/qxs/hdd/random_scen_1-165841')
