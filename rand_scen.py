@@ -24,7 +24,7 @@ def preprocess(build, tree, param, power, phase, roof):
         [input]
         build 0~100 -> 0~255
         tree 0~50 -> 0~255
-        z: 30~80 -> 0~255
+        z: 20~80 -> 0~255
         f: 5735000000~5825000000 -> 0~255
 
         [output]
@@ -70,7 +70,7 @@ def preprocess(build, tree, param, power, phase, roof):
     # shape 1 x 1000 x 1000
 
     # read tx location
-    z = (z-30)/50
+    z = (z-20)/60
     z = np.floor(z*255)
     x_idx = int(x)-1
     y_idx = int(y)-1
