@@ -130,8 +130,8 @@ def to_power_map(source, target, image_size):
 
         for d in dirs:
 
-            #if not int(d)==375504:
-            #    continue
+            if not int(d)==165842:
+                continue
 
             #import pdb
             #pdb.set_trace()
@@ -167,8 +167,13 @@ def to_power_map(source, target, image_size):
                     if l[0] == '#':
                         continue
                     s = re.findall(r'-?\d+\.?\d*', l)
+                    if not s:
+                        break
                     power.append(float(s[-2]))
                     phase.append(float(s[-1]))
+            if not power:
+                continue
+
 
             # read roof
             roof_no = []
