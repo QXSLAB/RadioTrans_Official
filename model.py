@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torchvision.transforms.functional as F
 import numpy as np
+from einops import rearrange
 
 
 def weight_init(m):
@@ -128,3 +129,42 @@ class Unet(nn.Module):
         x = self.up1(x, x1)
 
         return self.outConv(x)
+
+class Trans(nn.Module):
+
+    def __init__(self, size, dim, head=8, layer=4):
+
+        super().__init__()
+
+        self.size, self.dim, self.head, self.layer = size, dim, head, layer
+        self.L = 1024//self.size
+
+        self.pad = nn.ZeroPad2d(12)
+        self.pos_emb = nn.Parameter(torch.randn(1, self.L**2, self.dim))
+        self.patch_emb = nn.Linear(4*self.size**2, self.dim)
+        self.transformer = nn.TransformerEncoder(nn.TransformerEncoderLayer(self.dim, self.head),
+                                                 self.layer, nn.LayerNorm(self.dim))
+        self.res_emb = nn.Linear(self.dim, (64//self.L)**2)
+
+    def forward(self, x):
+
+        # shape [batch, 4, 1000, 1000]
+        x = self.pad(x)
+        # shape [batch, 4, 1024, 1024]
+        x = rearrange(x, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=self.size, p2=self.size)
+        # shape [batch, self.L**2, 4*self.size**2]
+        x = self.patch_emb(x)
+        # shape [batch, self.L**2, self.dim]
+        x += self.pos_emb
+        # shape [batch, self.L**2, self.dim]
+        x = self.transformer(x)
+        # shape [batch, self.L**2, self.dim]
+        x = self.res_emb(x)
+        # shape [batch, self.L**2, (64//self.L)**2]
+        x = rearrange(x, 'b (h w) (p1 p2) -> b (h p1) (w p2)', h=self.L, p1=64//self.L)
+        # shape [batch, 64, 64]
+        x = x.unsqueeze(1)
+        # shape [batch, 1, 64, 64]
+
+        return x
+
