@@ -45,7 +45,7 @@ def quality(img, match, metric):
     return metric(img.view(-1), match.view(-1))
 
 
-def display_quality(grid, attr, qlty):
+def display_quality(grid, attr):
 
     """
         display quality in image grid
@@ -57,7 +57,7 @@ def display_quality(grid, attr, qlty):
     draw = ImageDraw.Draw(grid_pil)
     font = ImageFont.truetype("/usr/share/fonts/truetype/"
                               "dejavu/DejaVuSansMono.ttf", size=30)
-    draw.text((0, 0), "{0} {1:.5f}".format(attr, qlty),
+    draw.text((0, 0), "{0}".format(attr),
               fill=(0, 255, 0), font=font)
 
     return grid_pil
@@ -95,9 +95,9 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
     # quality annotation
     qlty = quality(fake, match, metric)
-    fake_pil = display_quality(fake_grid, metric.__name__, qlty)
-    diff_pil = display_quality(diff_grid, metric.__name__, qlty)
-    match_pil = display_quality(match_grid, metric.__name__, qlty)
+    fake_pil = display_quality(fake_grid, "{0} {1:0.5f}".format(metric.__name__, qlty))
+    diff_pil = display_quality(diff_grid, "{0} {1:0.5f}".format(metric.__name__, qlty))
+    match_pil = display_quality(match_grid, "{0} {1:0.5f}".format(metric.__name__, qlty))
 
     if not writer:
         fake_pil.save(os.path.join(msg, "best.png"))
@@ -113,13 +113,13 @@ def visualize_gen(G, fixed_batch, metric, msg, writer=None):
 
 def display_fixed(fixed, path):
 
-    land, match = fixed
+    no, land, match = fixed
 
     y = land[:, :3, :, :]*0
     for i, x in enumerate(land):
         freq = x[3, 0, 0]
         x = x[:3, :, :]
-        pil = display_quality(x, "freq", freq)
+        pil = display_quality(x, "no:{0}, freq:{1:0.5f}".format(no[i].item(), freq.item()))
         y[i] = F.to_tensor(pil)
     
     torchvision.utils.save_image(y, os.path.join(path, "inp.png"), pad_value=1)
@@ -136,7 +136,7 @@ def land_blur(land):
 
 def main():
 
-    trail = "unet_random_l1"
+    trail = "random_track_l1"
     os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
@@ -157,7 +157,7 @@ def main():
     writer = SummaryWriter(experiment)
 
     # load data
-    dset = PowerSet("/home/qxs/hdd/rand_scen")
+    dset = PowerSet("/home/qxs/ssd/rand_scen_fix_lose")
     train_l = floor(0.99*len(dset))
     tset, vset = random_split(dset, [train_l, len(dset)-train_l])
     tloader = DataLoader(tset, batch_size=64,
@@ -167,10 +167,10 @@ def main():
                          shuffle=False, num_workers=4)
 
     # check data
-    land, power, phase =  next(iter(vloader))
+    no, land, power, phase =  next(iter(vloader))
     fixed_inp, fixed_match = land.cuda(), power.cuda()
     fixed_inp = land_blur(fixed_inp)
-    display_fixed((fixed_inp, fixed_match), experiment)
+    display_fixed((no, fixed_inp, fixed_match), experiment)
 
     # setup model
     G = Unet(64).cuda()
@@ -191,7 +191,7 @@ def main():
     loader = iter(tloader)
     t.append(time.time())
 
-    land, power, phase = next(loader)
+    no, land, power, phase = next(loader)
     t.append(time.time())
 
     inp, match = land.cuda(), power.cuda()
@@ -226,7 +226,7 @@ def main():
 
         # training
         G.train()
-        for idx, (land, power, phase) in enumerate(tloader):
+        for idx, (_, land, power, phase) in enumerate(tloader):
 
             inp, match = land.cuda(), power.cuda()
             inp = land_blur(inp)
@@ -270,7 +270,7 @@ def main():
                 G.eval()
                 with torch.no_grad():
                     val_l1, val_mse, val_loss = [], [], []
-                    for land, power, phase in tqdm(vloader):
+                    for _, land, power, phase in tqdm(vloader):
                         inp, match = land.cuda(), power.cuda()
                         inp = land_blur(inp)
                         fake = G(inp)

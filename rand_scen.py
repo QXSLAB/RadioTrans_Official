@@ -130,7 +130,7 @@ def to_power_map(source, target, image_size):
 
         for d in dirs:
 
-            if not int(d)==165842:
+            if int(d)<165842:
                 continue
 
             #import pdb
@@ -289,7 +289,7 @@ class PowerSet(Dataset):
 if __name__ == '__main__':
 
     source = '/media/qxs/My Passport/random_scenario_simulation'
-    target = '/home/qxs/hdd/test'
+    target = '/home/qxs/hdd/rand_fix_lose_165842'
     to_power_map(source, target, 64)
 
     #land, power, phase = to_power_map("/home/qxs/hdd/test",
