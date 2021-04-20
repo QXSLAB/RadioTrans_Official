@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torchvision.transforms.functional as F
 import numpy as np
-from einops import rearrange
+import einops
 
 
 def weight_init(m):
@@ -142,7 +142,7 @@ class Trans(nn.Module):
         self.pad = nn.ZeroPad2d(12)
 
         self.patch_emb = nn.Sequential(
-            nn.Conv2d(4, dim//4, 4, 4, 0), # shape 256
+            nn.Conv2d(9, dim//4, 4, 4, 0), # shape 256
             nn.BatchNorm2d(dim//4),
             nn.ReLU(),
             nn.Conv2d(dim//4, dim//2, 4, 4, 0), # shape 64
@@ -162,19 +162,42 @@ class Trans(nn.Module):
 
     def forward(self, x):
 
-        # shape [batch, 4, 1000, 1000]
+        b, c, h, w = x.shape
+
+        # define grid for each pixel
+        grid_x, grid_y = x.new_ones((b, 1, h, w)), x.new_ones((b, 1, h, w))
+        range_x = einops.repeat(torch.arange(h)/h, "h -> b 1 h w", b=b, w=w)
+        range_x = range_x.to(x.device)
+        range_y = einops.repeat(torch.arange(w)/w, "w -> b 1 h w", b=b, h=h)
+        range_y = range_y.to(x.device)
+        grid_x, grid_y = grid_x*range_x, grid_y*range_y
+        grid = torch.cat([grid_x, grid_y], dim=1)
+
+        # get xyz loc for source
+        s_map = x[:,[2],:,:]
+        z = s_map*(s_map>0)
+        z = einops.reduce(z, "b c h w -> b c", "max")
+        xy = grid*(s_map>0)
+        xy = einops.reduce(xy, "b c h w -> b c", "max")
+        xyz = torch.cat([xy, z], dim=1)
+        xyz = einops.repeat(xyz, "b c -> b c h w", h=h, w=w)
+
+        # combine
+        x = torch.cat([x, grid, xyz], dim=1)
+
+        # shape [batch, 5, 1000, 1000]
         x = self.pad(x)
-        # shape [batch, 4, 1024, 1024]
+        # shape [batch, 5, 1024, 1024]
         x = self.patch_emb(x)
         skip = x
         # shape [batch, dim, 16, 16]
-        x = rearrange(x, 'b c h w -> b (h w) c')
+        x = einops.rearrange(x, 'b c h w -> b (h w) c')
         # shape [batch, self.L, self.dim]
         x += self.pos_emb
         # shape [batch, self.L, self.dim]
         x = self.transformer(x)
         # shape [batch, self.L, self.dim]
-        x = rearrange(x, 'b (h w) c -> b c h w', h=16)
+        x = einops.rearrange(x, 'b (h w) c -> b c h w', h=16)
         # shape [batch, self.dim, 16, 16]
         x = torch.cat([x, skip], dim=1)
         # shape [batch, 2*self.dim, 16, 16]
