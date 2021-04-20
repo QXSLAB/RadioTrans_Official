@@ -136,7 +136,7 @@ def land_blur(land):
 
 def main():
 
-    trail = "random_trans_l1"
+    trail = "random_trans_test"
     os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
@@ -173,7 +173,7 @@ def main():
     display_fixed((no, fixed_inp, fixed_match), experiment)
 
     # setup model
-    G = Trans(64, 512).cuda()
+    G = Trans(512).cuda()
 
     # visulize model
     writer.add_graph(G, fixed_inp)
