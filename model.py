@@ -130,6 +130,22 @@ class Unet(nn.Module):
 
         return self.outConv(x)
 
+
+class Decode(nn.Module):
+    """
+        Up scale then double conv
+    """
+    def __init__(self, in_ch, out_ch):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_ch, in_ch, 2, 2, 0)
+        self.conv = DoubleC(in_ch, out_ch)
+
+    def forward(self, x):
+        x = self.up(x)
+        x = self.conv(x)
+        return x
+
+
 class Trans(nn.Module):
 
     def __init__(self, dim, head=8, layer=4):
@@ -157,7 +173,9 @@ class Trans(nn.Module):
         self.transformer = nn.TransformerEncoder(nn.TransformerEncoderLayer(self.dim, self.head),
                                                  self.layer, nn.LayerNorm(self.dim))
         self.refine = nn.Sequential(
-            nn.ConvTranspose2d(2*dim, 1, 4, 4, 0), # shape 64
+            Decode(dim*2, dim), # 32
+            Decode(dim, dim//2), # 64
+            nn.Conv2d(dim//2, 1, 3, 1, 1),
             nn.Sigmoid())
 
     def forward(self, x):
