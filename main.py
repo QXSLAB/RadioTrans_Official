@@ -18,7 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 from torchvision.utils import make_grid, save_image
 from rand_scen import PowerSet
-from model import Trans, weight_init
+from model import Unet, weight_init
 import torchvision
 import torchvision.transforms.functional as F
 from tqdm import tqdm
@@ -136,7 +136,7 @@ def land_blur(land):
 
 def main():
 
-    trail = "random_trans_grid_progressive"
+    trail = "random_trans_unet"
     os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
@@ -173,7 +173,7 @@ def main():
     display_fixed((no, fixed_inp, fixed_match), experiment)
 
     # setup model
-    G = Trans(512).cuda()
+    G = Unet(64).cuda()
 
     # visulize model
     writer.add_graph(G, fixed_inp)

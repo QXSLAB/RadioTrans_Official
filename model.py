@@ -36,7 +36,7 @@ class LandFeature(nn.Module):
 
         self.main = nn.Sequential(
             
-            nn.Conv2d(4, ch//2, 4, 4, 12),
+            nn.Conv2d(9, ch//2, 4, 4, 12),
             nn.BatchNorm2d(ch//2),
             nn.ReLU(),
 
@@ -100,13 +100,21 @@ class Unet(nn.Module):
     def __init__(self, ch):
 
         super().__init__()
-
+        
         self.land = LandFeature(ch)
 
         self.inc = DoubleC(ch, ch*2)  # batch x ch*2 x 64 x 64
         self.down1 = Down(ch*2, ch*4)  # batch x ch*4 x 32 x 32
         self.down2 = Down(ch*4, ch*8)  # batch x ch*8 x 16 x 16
         self.down3 = Down(ch*8, ch*16)  # batch x ch*16 x 8 x 8
+        
+        self.L = 8*8
+        self.dim = ch*16
+        self.head = 8
+        self.layer = 4
+        self.pos_emb = nn.Parameter(torch.randn(1, self.L, self.dim))
+        self.transformer = nn.TransformerEncoder(nn.TransformerEncoderLayer(self.dim, self.head),
+                                                 self.layer, nn.LayerNorm(self.dim))
 
         self.up3 = Up(ch*16, ch*8)  # batch x ch*8 x 16 x 16
         self.up2 = Up(ch*8, ch*4)  # batch x ch*4 x 32 x 32
@@ -116,14 +124,47 @@ class Unet(nn.Module):
             nn.Conv2d(ch*2, 1, 1, 1, 0),
             nn.Sigmoid())
 
-    def forward(self, inp):
+    def forward(self, x):
+
+        b, c, h, w = x.shape
+
+        # define grid for each pixel
+        grid_x, grid_y = x.new_ones((b, 1, h, w)), x.new_ones((b, 1, h, w))
+        range_x = einops.repeat(torch.arange(h)/h, "h -> b 1 h w", b=b, w=w)
+        range_x = range_x.to(x.device)
+        range_y = einops.repeat(torch.arange(w)/w, "w -> b 1 h w", b=b, h=h)
+        range_y = range_y.to(x.device)
+        grid_x, grid_y = grid_x*range_x, grid_y*range_y
+        grid = torch.cat([grid_x, grid_y], dim=1)
+
+        # get xyz loc for source
+        s_map = x[:,[2],:,:]
+        z = s_map*(s_map>0)
+        z = einops.reduce(z, "b c h w -> b c", "max")
+        xy = grid*(s_map>0)
+        xy = einops.reduce(xy, "b c h w -> b c", "max")
+        xyz = torch.cat([xy, z], dim=1)
+        xyz = einops.repeat(xyz, "b c -> b c h w", h=h, w=w)
+
+        # combine
+        inp = torch.cat([x, grid, xyz], dim=1)
 
         inp = self.land(inp)
-
         x1 = self.inc(inp)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
         x4 = self.down3(x3)
+
+        # shape [batch, ch*16, 8, 8]
+        x = einops.rearrange(x4, 'b c h w -> b (h w) c')
+        # shape [batch, 8*8, ch*16]
+        x += self.pos_emb
+        # shape [batch, 8*8, ch*16]
+        x = self.transformer(x)
+        # shape [batch, 8*8, ch*16]
+        x4 = einops.rearrange(x, 'b (h w) c -> b c h w', h=8)
+        # shape [batch, ch*16, 8, 8]
+
         x = self.up3(x4, x3)
         x = self.up2(x, x2)
         x = self.up1(x, x1)
