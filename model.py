@@ -94,6 +94,50 @@ class Up(nn.Module):
         return self.conv(x)
 
 
+class TransLayer(nn.Module):
+
+    def __init__(self, H, ch, L, dim, head, layer):
+
+        super().__init__()
+
+        stride = H//L
+        self.to_emb = nn.Linear(stride**2*ch, dim)
+        self.pos_emb = nn.Parameter(torch.randn(1, L**2, dim))
+        self.transformer = nn.TransformerEncoder(nn.TransformerEncoderLayer(dim, head),
+                                                 layer, nn.LayerNorm(dim))
+        self.from_emb = nn.Linear(dim, stride**2*ch)
+        self.up = nn.Upsample(scale_factor=64//H)
+
+        self.stride = stride
+        self.L = L
+
+    def forward(self,x):
+
+        skip = x
+        s, L = self.stride, self.L
+        
+        # shape [batch, ch, H, H]
+        x = einops.rearrange(x, 'b c (h p1) (w p2) -> b (h w) (c p1 p2)', p1=s, p2=s)
+        # shape [batch, L**2, ch*stride**2]
+        x = self.to_emb(x)
+        # shape [batch, L**2, dim]
+        x += self.pos_emb
+        # shape [batch, L**2, dim]
+        x = self.transformer(x)
+        # shape [batch, L**2, dim]
+        x = self.from_emb(x)
+        # shape [batch, L**2, ch*stride**2]
+        x = einops.rearrange(x, 'b (h w) (c p1 p2) -> b c (h p1) (w p2)', h=L, p1=s, p2=s)
+        # shape [batch, ch, H, H]
+
+        x = x+skip
+
+        x = self.up(x)
+        # shape [batch, ch, 64, 64]
+
+        return x
+
+
 class Unet(nn.Module):
 
 
@@ -103,25 +147,20 @@ class Unet(nn.Module):
         
         self.land = LandFeature(ch)
 
-        self.inc = DoubleC(ch, ch*2)  # batch x ch*2 x 64 x 64
-        self.down1 = Down(ch*2, ch*4)  # batch x ch*4 x 32 x 32
-        self.down2 = Down(ch*4, ch*8)  # batch x ch*8 x 16 x 16
-        self.down3 = Down(ch*8, ch*16)  # batch x ch*16 x 8 x 8
+        self.down1 = DoubleC(ch, ch)  # batch x ch x 64 x 64
+        self.down2 = Down(ch, ch)  # batch x ch x 32 x 32
+        self.down3 = Down(ch, ch)  # batch x ch x 16 x 16
+        self.down4 = Down(ch, ch)  # batch x ch x 8 x 8
+
+        self.trans1 = TransLayer(64, ch, 8, 512, 8, 2)
+        self.trans2 = TransLayer(32, ch, 8, 512, 8, 2)
+        self.trans3 = TransLayer(16, ch, 8, 512, 8, 2)
+        self.trans4 = TransLayer(8, ch, 8, 512, 8, 2)
         
-        self.L = 8*8
-        self.dim = ch*16
-        self.head = 8
-        self.layer = 4
-        self.pos_emb = nn.Parameter(torch.randn(1, self.L, self.dim))
-        self.transformer = nn.TransformerEncoder(nn.TransformerEncoderLayer(self.dim, self.head),
-                                                 self.layer, nn.LayerNorm(self.dim))
-
-        self.up3 = Up(ch*16, ch*8)  # batch x ch*8 x 16 x 16
-        self.up2 = Up(ch*8, ch*4)  # batch x ch*4 x 32 x 32
-        self.up1 = Up(ch*4, ch*2)  # batch x ch*2 x 64 x 64
-
         self.outConv = nn.Sequential(
-            nn.Conv2d(ch*2, 1, 1, 1, 0),
+            DoubleC(ch*4, ch*2),
+            DoubleC(ch*2, ch),
+            nn.Conv2d(ch, 1, 1, 1, 0),
             nn.Sigmoid())
 
     def forward(self, x):
@@ -150,118 +189,15 @@ class Unet(nn.Module):
         inp = torch.cat([x, grid, xyz], dim=1)
 
         inp = self.land(inp)
-        x1 = self.inc(inp)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x4 = self.down3(x3)
 
-        # shape [batch, ch*16, 8, 8]
-        x = einops.rearrange(x4, 'b c h w -> b (h w) c')
-        # shape [batch, 8*8, ch*16]
-        x += self.pos_emb
-        # shape [batch, 8*8, ch*16]
-        x = self.transformer(x)
-        # shape [batch, 8*8, ch*16]
-        x4 = einops.rearrange(x, 'b (h w) c -> b c h w', h=8)
-        # shape [batch, ch*16, 8, 8]
+        x1 = self.down1(inp)
+        x2 = self.down2(x1)
+        x3 = self.down3(x2)
+        x4 = self.down4(x3)
 
-        x = self.up3(x4, x3)
-        x = self.up2(x, x2)
-        x = self.up1(x, x1)
+        x = torch.cat([self.trans1(x1), self.trans2(x2),
+                       self.trans3(x3), self.trans4(x4)], dim=1)
 
-        return self.outConv(x)
-
-
-class Decode(nn.Module):
-    """
-        Up scale then double conv
-    """
-    def __init__(self, in_ch, out_ch):
-        super().__init__()
-        self.up = nn.ConvTranspose2d(in_ch, in_ch, 2, 2, 0)
-        self.conv = DoubleC(in_ch, out_ch)
-
-    def forward(self, x):
-        x = self.up(x)
-        x = self.conv(x)
-        return x
-
-
-class Trans(nn.Module):
-
-    def __init__(self, dim, head=8, layer=4):
-
-        super().__init__()
-
-        self.dim, self.head, self.layer = dim, head, layer
-        self.L = 16*16
-
-        self.pad = nn.ZeroPad2d(12)
-
-        self.patch_emb = nn.Sequential(
-            nn.Conv2d(9, dim//4, 4, 4, 0), # shape 256
-            nn.BatchNorm2d(dim//4),
-            nn.ReLU(),
-            nn.Conv2d(dim//4, dim//2, 4, 4, 0), # shape 64
-            nn.BatchNorm2d(dim//2),
-            nn.ReLU(),
-            nn.Conv2d(dim//2, dim, 4, 4, 0), # shape 16
-            nn.BatchNorm2d(dim),
-            nn.ReLU())
-
-        self.pos_emb = nn.Parameter(torch.randn(1, self.L, self.dim))
-        
-        self.transformer = nn.TransformerEncoder(nn.TransformerEncoderLayer(self.dim, self.head),
-                                                 self.layer, nn.LayerNorm(self.dim))
-        self.refine = nn.Sequential(
-            Decode(dim*2, dim), # 32
-            Decode(dim, dim//2), # 64
-            nn.Conv2d(dim//2, 1, 3, 1, 1),
-            nn.Sigmoid())
-
-    def forward(self, x):
-
-        b, c, h, w = x.shape
-
-        # define grid for each pixel
-        grid_x, grid_y = x.new_ones((b, 1, h, w)), x.new_ones((b, 1, h, w))
-        range_x = einops.repeat(torch.arange(h)/h, "h -> b 1 h w", b=b, w=w)
-        range_x = range_x.to(x.device)
-        range_y = einops.repeat(torch.arange(w)/w, "w -> b 1 h w", b=b, h=h)
-        range_y = range_y.to(x.device)
-        grid_x, grid_y = grid_x*range_x, grid_y*range_y
-        grid = torch.cat([grid_x, grid_y], dim=1)
-
-        # get xyz loc for source
-        s_map = x[:,[2],:,:]
-        z = s_map*(s_map>0)
-        z = einops.reduce(z, "b c h w -> b c", "max")
-        xy = grid*(s_map>0)
-        xy = einops.reduce(xy, "b c h w -> b c", "max")
-        xyz = torch.cat([xy, z], dim=1)
-        xyz = einops.repeat(xyz, "b c -> b c h w", h=h, w=w)
-
-        # combine
-        x = torch.cat([x, grid, xyz], dim=1)
-
-        # shape [batch, 5, 1000, 1000]
-        x = self.pad(x)
-        # shape [batch, 5, 1024, 1024]
-        x = self.patch_emb(x)
-        skip = x
-        # shape [batch, dim, 16, 16]
-        x = einops.rearrange(x, 'b c h w -> b (h w) c')
-        # shape [batch, self.L, self.dim]
-        x += self.pos_emb
-        # shape [batch, self.L, self.dim]
-        x = self.transformer(x)
-        # shape [batch, self.L, self.dim]
-        x = einops.rearrange(x, 'b (h w) c -> b c h w', h=16)
-        # shape [batch, self.dim, 16, 16]
-        x = torch.cat([x, skip], dim=1)
-        # shape [batch, 2*self.dim, 16, 16]
-        x = self.refine(x)
-        # shape [batch, 1, 64, 64]
+        x = self.outConv(x)
 
         return x
-

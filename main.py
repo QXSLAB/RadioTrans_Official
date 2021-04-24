@@ -136,8 +136,8 @@ def land_blur(land):
 
 def main():
 
-    trail = "random_trans_unet"
-    os.environ["CUDA_VISIBLE_DEVICES"]="0"
+    trail = "random_trans_fpn"
+    os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
