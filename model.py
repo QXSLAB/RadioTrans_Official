@@ -147,19 +147,19 @@ class Unet(nn.Module):
         
         self.land = LandFeature(ch)
 
-        self.down1 = DoubleC(ch, ch)  # batch x ch x 64 x 64
-        self.down2 = Down(ch, ch)  # batch x ch x 32 x 32
-        self.down3 = Down(ch, ch)  # batch x ch x 16 x 16
-        self.down4 = Down(ch, ch)  # batch x ch x 8 x 8
+        self.down1 = DoubleC(ch, 2*ch)  # batch x ch*2 x 64 x 64
+        self.down2 = Down(2*ch, 4*ch)  # batch x ch*4 x 32 x 32
+        self.down3 = Down(4*ch, 8*ch)  # batch x ch*8 x 16 x 16
+        self.down4 = Down(8*ch, 16*ch)  # batch x ch*16 x 8 x 8
 
-        self.trans1 = TransLayer(64, ch, 8, 512, 8, 2)
-        self.trans2 = TransLayer(32, ch, 8, 512, 8, 2)
-        self.trans3 = TransLayer(16, ch, 8, 512, 8, 2)
-        self.trans4 = TransLayer(8, ch, 8, 512, 8, 2)
+        self.trans1 = TransLayer(64, ch*2, 8, 512, 8, 2)
+        self.trans2 = TransLayer(32, ch*4, 8, 512, 8, 2)
+        self.trans3 = TransLayer(16, ch*8, 8, 512, 8, 2)
+        self.trans4 = TransLayer(8, ch*16, 8, 512, 8, 2)
         
         self.outConv = nn.Sequential(
-            DoubleC(ch*4, ch*2),
-            DoubleC(ch*2, ch),
+            DoubleC(ch*(2+4+8+16), ch*4),
+            DoubleC(ch*4, ch),
             nn.Conv2d(ch, 1, 1, 1, 0),
             nn.Sigmoid())
 
