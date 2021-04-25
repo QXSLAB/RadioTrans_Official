@@ -106,7 +106,6 @@ class TransLayer(nn.Module):
         self.transformer = nn.TransformerEncoder(nn.TransformerEncoderLayer(dim, head),
                                                  layer, nn.LayerNorm(dim))
         self.from_emb = nn.Linear(dim, stride**2*ch)
-        self.up = nn.Upsample(scale_factor=64//H)
 
         self.stride = stride
         self.L = L
@@ -132,9 +131,6 @@ class TransLayer(nn.Module):
 
         x = x+skip
 
-        x = self.up(x)
-        # shape [batch, ch, 64, 64]
-
         return x
 
 
@@ -152,14 +148,17 @@ class Unet(nn.Module):
         self.down3 = Down(4*ch, 8*ch)  # batch x ch*8 x 16 x 16
         self.down4 = Down(8*ch, 16*ch)  # batch x ch*16 x 8 x 8
 
-        self.trans1 = TransLayer(64, ch*2, 8, 512, 8, 2)
-        self.trans2 = TransLayer(32, ch*4, 8, 512, 8, 2)
-        self.trans3 = TransLayer(16, ch*8, 8, 512, 8, 2)
-        self.trans4 = TransLayer(8, ch*16, 8, 512, 8, 2)
+        self.up3 = Up(ch*16, ch*8)  # batch, ch*8, 16, 16
+        self.up2 = Up(ch*8, ch*4)  # batch, ch*4, 16, 16
+        self.up1 = Up(ch*4, ch*2)  # batch, ch*2, 16, 16
+
+        self.trans1 = TransLayer(64, ch*2, 8, 512, 8, 1)
+        self.trans2 = TransLayer(32, ch*4, 8, 512, 8, 1)
+        self.trans3 = TransLayer(16, ch*8, 8, 512, 8, 1)
+        self.trans4 = TransLayer(8, ch*16, 8, 512, 8, 1)
         
         self.outConv = nn.Sequential(
-            DoubleC(ch*(2+4+8+16), ch*4),
-            DoubleC(ch*4, ch),
+            DoubleC(ch*2, ch),
             nn.Conv2d(ch, 1, 1, 1, 0),
             nn.Sigmoid())
 
@@ -195,8 +194,10 @@ class Unet(nn.Module):
         x3 = self.down3(x2)
         x4 = self.down4(x3)
 
-        x = torch.cat([self.trans1(x1), self.trans2(x2),
-                       self.trans3(x3), self.trans4(x4)], dim=1)
+        x = self.up3(self.trans4(x4), x3)
+        x = self.up2(self.trans3(x), x2)
+        x = self.up1(self.trans2(x), x1)
+        x = self.trans1(x)
 
         x = self.outConv(x)
 

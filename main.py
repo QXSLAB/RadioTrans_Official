@@ -2,6 +2,7 @@
     main file
 """
 
+import getpass
 import os
 import time
 from math import floor
@@ -136,8 +137,8 @@ def land_blur(land):
 
 def main():
 
-    trail = "random_trans_fpn_deep"
-    os.environ["CUDA_VISIBLE_DEVICES"]="1"
+    trail = "random_trans_post"
+    os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
     experiment = "/home/dell/hdd/program_fsrpe/{}".format(trail)
 
@@ -157,7 +158,7 @@ def main():
     writer = SummaryWriter(experiment)
 
     # load data
-    dset = PowerSet("/home/qxs/ssd/rand_scen_fix_lose")
+    dset = PowerSet("/home/{}/ssd/rand_scen_fix_lose".format(getpass.getuser()))
     train_l = floor(0.99*len(dset))
     tset, vset = random_split(dset, [train_l, len(dset)-train_l])
     tloader = DataLoader(tset, batch_size=64,
