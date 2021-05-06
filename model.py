@@ -120,7 +120,7 @@ class TransLayer(nn.Module):
         # shape [batch, L**2, ch*stride**2]
         x = self.to_emb(x)
         # shape [batch, L**2, dim]
-        x += self.pos_emb
+        x += self.pos_emb*0
         # shape [batch, L**2, dim]
         x = self.transformer(x)
         # shape [batch, L**2, dim]
